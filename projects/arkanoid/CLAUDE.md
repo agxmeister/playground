@@ -1,0 +1,21 @@
+# CLAUDE.md
+
+Classic Arkanoid (Breakout) game. Unity `6000.5.6f1`, Universal Render Pipeline, new Input System.
+
+## Layout
+
+- `Assets/Scripts/Paddle.cs` — keyboard paddle movement (`Keyboard.current`, arrows/A-D), clamped to the playfield.
+- `Assets/Scripts/Ball.cs` — constant-speed ball. Kinematic and paddle-following while attached; dynamic after launch. `FixedUpdate` renormalizes velocity to `speed` and enforces a minimum vertical component so the ball can't get stuck bouncing horizontally. Paddle bounces override the physics reflection with an angle based on where the ball hit the paddle.
+- `Assets/Scripts/Brick.cs` — destroys itself on ball impact and reports its `Points` to `GameManager`.
+- `Assets/Scripts/GameManager.cs` — state machine (Ready/Playing/GameOver/Won), score, lives, runtime brick-grid construction, OnGUI HUD. Serialized references to the Ball/Brick prefabs and the scene Paddle are wired by the editor setup script.
+- `Assets/Editor/ArkanoidSetup.cs` — `[InitializeOnLoadMethod]` script that generates the sprite textures (`Assets/Sprites`), configures their importers, creates the bouncy `PhysicsMaterial2D` (`Assets/Physics`) and the `Ball`/`Brick` prefabs (`Assets/Prefabs`), then authors the camera, walls, paddle, and wired `GameManager` into the scene. Editor-authored content stays inspectable without Play mode; only the ball and bricks exist at runtime.
+
+## Editor setup is staged and resumable
+
+`ArkanoidSetup.Setup()` performs **one** stage per domain reload and returns, relying on the next reload to observe the previous stage's output (textures → importers → physics material → prefabs → scene). This works around `AssetDatabase` writes not being reliably readable back via `LoadAssetAtPath` within the same call. If you touch this file, preserve the one-stage-per-reload structure. The scene stage is guarded by `GameObject.Find("GameManager")`, so once set up the whole method is a no-op.
+
+Folder existence is checked on disk (`System.IO.Directory`) rather than via `AssetDatabase.IsValidFolder`, which can go stale in driven sessions.
+
+**Caution:** the scene stage calls `EditorSceneManager.SaveScene` from `[InitializeOnLoadMethod]`; in one session Unity then detected the open scene's file change and raised a *modal* "scene changed on disk" dialog that blocked the Editor main thread (and the Uplink bridge) until dismissed by hand. Either button is safe (disk and memory content are identical), but be aware programmatic scene saves can trigger it.
+
+Use the `unity-game-design` skill for the general pattern this file follows when making further Editor-script changes here.
