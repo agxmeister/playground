@@ -3,6 +3,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
 // creates one batch of assets and returns, letting the next domain reload see
@@ -75,14 +76,22 @@ public static class ArkanoidSetup
         }
 
         // Stage 5: scene content.
-        if (GameObject.Find("GameManager") != null) return;
+        if (GameObject.Find("GameManager") == null)
+        {
+            var ballPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BallPrefabPath);
+            var brickPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BrickPrefabPath);
+            if (ballPrefab == null || brickPrefab == null) return;
 
-        var ballPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BallPrefabPath);
-        var brickPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BrickPrefabPath);
-        if (ballPrefab == null || brickPrefab == null) return;
+            BuildScene(squareSprite, ballPrefab, brickPrefab);
+            Debug.Log("[ArkanoidSetup] Stage 5: built and saved the scene.");
+            return;
+        }
 
-        BuildScene(squareSprite, ballPrefab, brickPrefab);
-        Debug.Log("[ArkanoidSetup] Stage 5: built and saved the scene.");
+        // Stage 6: scoreboard UI canvas (screen-space overlay).
+        if (GameObject.Find("ScoreBoard") != null) return;
+
+        BuildScoreBoard();
+        Debug.Log("[ArkanoidSetup] Stage 6: built and saved the scoreboard UI.");
     }
 
     static string ToAbsolute(string assetsRelativePath) =>
@@ -208,6 +217,66 @@ public static class ArkanoidSetup
         var scene = SceneManager.GetActiveScene();
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene);
+    }
+
+    static void BuildScoreBoard()
+    {
+        var canvasGo = new GameObject("ScoreBoard");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        var scaler = canvasGo.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        scaler.matchWidthOrHeight = 0.5f;
+        var board = canvasGo.AddComponent<ScoreBoard>();
+
+        var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        var scoreValue = CreateReadout(canvasGo.transform, "Score", "SCORE", 0f, 40f, TextAnchor.UpperLeft, font);
+        var highScoreValue = CreateReadout(canvasGo.transform, "HighScore", "HIGH SCORE", 0.5f, 0f, TextAnchor.UpperCenter, font);
+        var livesValue = CreateReadout(canvasGo.transform, "Lives", "LIVES", 1f, -40f, TextAnchor.UpperRight, font);
+
+        var boardSo = new SerializedObject(board);
+        boardSo.FindProperty("scoreValue").objectReferenceValue = scoreValue;
+        boardSo.FindProperty("highScoreValue").objectReferenceValue = highScoreValue;
+        boardSo.FindProperty("livesValue").objectReferenceValue = livesValue;
+        boardSo.ApplyModifiedPropertiesWithoutUndo();
+
+        var manager = Object.FindFirstObjectByType<GameManager>();
+        var managerSo = new SerializedObject(manager);
+        managerSo.FindProperty("scoreBoard").objectReferenceValue = board;
+        managerSo.ApplyModifiedPropertiesWithoutUndo();
+
+        var scene = SceneManager.GetActiveScene();
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+    }
+
+    // Builds a caption ("SCORE") with a value line under it, anchored to the top
+    // edge of the canvas, and returns the value Text for runtime updates.
+    static Text CreateReadout(Transform parent, string name, string caption, float anchorX, float offsetX, TextAnchor alignment, Font font)
+    {
+        CreateText(parent, name + "Caption", caption, 26, new Vector2(anchorX, 1f), new Vector2(offsetX, -20f), alignment, font, new Color(0.62f, 0.66f, 0.75f));
+        return CreateText(parent, name + "Value", "0", 42, new Vector2(anchorX, 1f), new Vector2(offsetX, -52f), alignment, font, Color.white);
+    }
+
+    static Text CreateText(Transform parent, string name, string content, int fontSize, Vector2 anchor, Vector2 offset, TextAnchor alignment, Font font, Color color)
+    {
+        var go = new GameObject(name, typeof(RectTransform));
+        var rect = go.GetComponent<RectTransform>();
+        rect.SetParent(parent, false);
+        rect.anchorMin = anchor;
+        rect.anchorMax = anchor;
+        rect.pivot = anchor;
+        rect.anchoredPosition = offset;
+        rect.sizeDelta = new Vector2(420f, 48f);
+        var text = go.AddComponent<Text>();
+        text.font = font;
+        text.text = content;
+        text.fontSize = fontSize;
+        text.fontStyle = FontStyle.Bold;
+        text.alignment = alignment;
+        text.color = color;
+        return text;
     }
 
     static void CreateWall(Transform parent, string name, Vector3 position, Vector3 scale, Sprite sprite, Color color)

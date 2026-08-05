@@ -5,9 +5,12 @@ public class GameManager : MonoBehaviour
 {
     public static GameManager Instance { get; private set; }
 
+    const string HighScoreKey = "Arkanoid.HighScore";
+
     [SerializeField] Ball ballPrefab;
     [SerializeField] Brick brickPrefab;
     [SerializeField] Paddle paddle;
+    [SerializeField] ScoreBoard scoreBoard;
 
     [SerializeField] int rows = 5;
     [SerializeField] int columns = 8;
@@ -28,12 +31,14 @@ public class GameManager : MonoBehaviour
     Ball ball;
     Transform brickHolder;
     int score;
+    int highScore;
     int lives;
     int bricksLeft;
 
     void Awake()
     {
         Instance = this;
+        highScore = PlayerPrefs.GetInt(HighScoreKey, 0);
     }
 
     void Start()
@@ -43,10 +48,29 @@ public class GameManager : MonoBehaviour
 
     void NewGame()
     {
-        score = 0;
-        lives = startingLives;
+        SetScore(0);
+        SetLives(startingLives);
         BuildLevel();
         SpawnBall();
+    }
+
+    void SetScore(int value)
+    {
+        score = value;
+        if (score > highScore)
+        {
+            highScore = score;
+            PlayerPrefs.SetInt(HighScoreKey, highScore);
+        }
+        if (scoreBoard == null) return;
+        scoreBoard.SetScore(score);
+        scoreBoard.SetHighScore(highScore);
+    }
+
+    void SetLives(int value)
+    {
+        lives = value;
+        if (scoreBoard != null) scoreBoard.SetLives(lives);
     }
 
     void BuildLevel()
@@ -105,7 +129,7 @@ public class GameManager : MonoBehaviour
 
     void OnBallLost()
     {
-        lives--;
+        SetLives(lives - 1);
         if (lives > 0)
         {
             SpawnBall();
@@ -119,7 +143,7 @@ public class GameManager : MonoBehaviour
 
     public void OnBrickDestroyed(Brick brick)
     {
-        score += brick.Points;
+        SetScore(score + brick.Points);
         bricksLeft--;
         if (bricksLeft > 0 || state != State.Playing) return;
 
@@ -133,11 +157,6 @@ public class GameManager : MonoBehaviour
 
     void OnGUI()
     {
-        var style = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold };
-        style.normal.textColor = Color.white;
-        GUI.Label(new Rect(20, 12, 300, 40), $"Score: {score}", style);
-        GUI.Label(new Rect(Screen.width - 140, 12, 120, 40), $"Lives: {lives}", style);
-
         string message = state switch
         {
             State.Ready => "Press SPACE to launch",
@@ -148,7 +167,12 @@ public class GameManager : MonoBehaviour
 
         if (message == null) return;
 
-        var banner = new GUIStyle(style) { fontSize = 32, alignment = TextAnchor.MiddleCenter };
+        var banner = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 32,
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleCenter,
+        };
         banner.normal.textColor = Color.white;
         GUI.Label(new Rect(0f, Screen.height / 2f - 60f, Screen.width, 120f), message, banner);
     }
