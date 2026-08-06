@@ -11,6 +11,7 @@ public class GameManager : MonoBehaviour
     [SerializeField] Brick brickPrefab;
     [SerializeField] Paddle paddle;
     [SerializeField] ScoreBoard scoreBoard;
+    [SerializeField] RecordsPanel recordsPanel;
 
     [SerializeField] int rows = 5;
     [SerializeField] int columns = 8;
@@ -25,15 +26,20 @@ public class GameManager : MonoBehaviour
         new Color(0.20f, 0.60f, 0.86f),
     };
 
-    enum State { Ready, Playing, GameOver, Won }
+    enum State { Ready, Playing, EnteringName, GameOver, Won }
+
+    const int MaxNameLength = 12;
 
     State state;
+    State endState;
     Ball ball;
     Transform brickHolder;
     int score;
     int highScore;
+    int previousRecord;
     int lives;
     int bricksLeft;
+    string typedName = "";
 
     void Awake()
     {
@@ -48,6 +54,8 @@ public class GameManager : MonoBehaviour
 
     void NewGame()
     {
+        previousRecord = highScore;
+        if (recordsPanel != null) recordsPanel.Hide();
         SetScore(0);
         SetLives(startingLives);
         BuildLevel();
@@ -120,6 +128,11 @@ public class GameManager : MonoBehaviour
             case State.Playing:
                 if (ball.transform.position.y < -7f) OnBallLost();
                 break;
+            case State.EnteringName:
+                bool pressedEnter = keyboard != null
+                    && (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame);
+                if (pressedEnter) SubmitName();
+                break;
             case State.GameOver:
             case State.Won:
                 if (pressedSpace) NewGame();
@@ -136,9 +149,9 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        state = State.GameOver;
         Destroy(ball.gameObject);
         ball = null;
+        EndRound(State.GameOver);
     }
 
     public void OnBrickDestroyed(Brick brick)
@@ -147,25 +160,68 @@ public class GameManager : MonoBehaviour
         bricksLeft--;
         if (bricksLeft > 0 || state != State.Playing) return;
 
-        state = State.Won;
         if (ball != null)
         {
             Destroy(ball.gameObject);
             ball = null;
         }
+        EndRound(State.Won);
+    }
+
+    void EndRound(State result)
+    {
+        endState = result;
+        var keyboard = Keyboard.current;
+        if (score > previousRecord && recordsPanel != null && keyboard != null)
+        {
+            state = State.EnteringName;
+            typedName = "";
+            recordsPanel.ShowNameEntry(score);
+            keyboard.onTextInput += OnTextInput;
+            return;
+        }
+        ShowEndScreen();
+    }
+
+    void ShowEndScreen()
+    {
+        state = endState;
+        string message = endState == State.Won
+            ? $"YOU WIN! Score: {score} — press SPACE to play again"
+            : $"GAME OVER — Score: {score} — press SPACE to restart";
+        if (recordsPanel != null) recordsPanel.ShowRecords(RecordBook.Load(), message);
+    }
+
+    void OnTextInput(char character)
+    {
+        if (state != State.EnteringName) return;
+        if (character == '\b')
+        {
+            if (typedName.Length > 0) typedName = typedName.Substring(0, typedName.Length - 1);
+        }
+        else if (!char.IsControl(character) && typedName.Length < MaxNameLength)
+        {
+            typedName += character;
+        }
+        recordsPanel.SetTypedName(typedName);
+    }
+
+    void SubmitName()
+    {
+        if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
+        var name = typedName.Trim();
+        RecordBook.Add(name.Length > 0 ? name : "???", score);
+        ShowEndScreen();
+    }
+
+    void OnDestroy()
+    {
+        if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
     }
 
     void OnGUI()
     {
-        string message = state switch
-        {
-            State.Ready => "Press SPACE to launch",
-            State.GameOver => $"GAME OVER\nScore: {score} — press SPACE to restart",
-            State.Won => $"YOU WIN!\nScore: {score} — press SPACE to play again",
-            _ => null,
-        };
-
-        if (message == null) return;
+        if (state != State.Ready) return;
 
         var banner = new GUIStyle(GUI.skin.label)
         {
@@ -174,6 +230,6 @@ public class GameManager : MonoBehaviour
             alignment = TextAnchor.MiddleCenter,
         };
         banner.normal.textColor = Color.white;
-        GUI.Label(new Rect(0f, Screen.height / 2f - 60f, Screen.width, 120f), message, banner);
+        GUI.Label(new Rect(0f, Screen.height / 2f - 60f, Screen.width, 120f), "Press SPACE to launch", banner);
     }
 }

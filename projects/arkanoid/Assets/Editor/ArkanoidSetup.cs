@@ -88,10 +88,41 @@ public static class ArkanoidSetup
         }
 
         // Stage 6: scoreboard UI canvas (screen-space overlay).
-        if (GameObject.Find("ScoreBoard") != null) return;
+        if (GameObject.Find("ScoreBoard") == null)
+        {
+            BuildScoreBoard();
+            Debug.Log("[ArkanoidSetup] Stage 6: built and saved the scoreboard UI.");
+            return;
+        }
 
-        BuildScoreBoard();
-        Debug.Log("[ArkanoidSetup] Stage 6: built and saved the scoreboard UI.");
+        // Stage 7: records panel (hall of fame + name entry). Authored inactive,
+        // so the guard must include inactive objects.
+        if (Object.FindAnyObjectByType<RecordsPanel>(FindObjectsInactive.Include) == null)
+        {
+            BuildRecordsPanel();
+            Debug.Log("[ArkanoidSetup] Stage 7: built the records panel (scene left dirty).");
+            return;
+        }
+
+        // Stage 8: persist stage 7's panel once it exists in memory but not yet
+        // in the scene file. Deferred out of the reload callback, where a direct
+        // SaveScene raised the modal "scene changed on disk" dialog before.
+        // delayCall proved unreliable in driven sessions; a self-removing
+        // update handler fires on the next editor tick instead.
+        var scene = SceneManager.GetActiveScene();
+        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains("RecordsPanel"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 8: queued scene save for the next editor tick.");
+        }
+    }
+
+    // Runs once, on the first editor tick after the reload that registered it.
+    static void SaveSceneOnce()
+    {
+        EditorApplication.update -= SaveSceneOnce;
+        EditorSceneManager.SaveScene(SceneManager.GetActiveScene());
+        Debug.Log("[ArkanoidSetup] Stage 8: saved the scene with the records panel.");
     }
 
     static string ToAbsolute(string assetsRelativePath) =>
@@ -241,7 +272,7 @@ public static class ArkanoidSetup
         boardSo.FindProperty("livesValue").objectReferenceValue = livesValue;
         boardSo.ApplyModifiedPropertiesWithoutUndo();
 
-        var manager = Object.FindFirstObjectByType<GameManager>();
+        var manager = Object.FindAnyObjectByType<GameManager>();
         var managerSo = new SerializedObject(manager);
         managerSo.FindProperty("scoreBoard").objectReferenceValue = board;
         managerSo.ApplyModifiedPropertiesWithoutUndo();
@@ -249,6 +280,46 @@ public static class ArkanoidSetup
         var scene = SceneManager.GetActiveScene();
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene);
+    }
+
+    static void BuildRecordsPanel()
+    {
+        var canvas = GameObject.Find("ScoreBoard");
+        var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+        var panelGo = new GameObject("RecordsPanel", typeof(RectTransform));
+        var rect = panelGo.GetComponent<RectTransform>();
+        rect.SetParent(canvas.transform, false);
+        rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.sizeDelta = new Vector2(760f, 560f);
+        var background = panelGo.AddComponent<Image>();
+        background.color = new Color(0.04f, 0.06f, 0.1f, 0.92f);
+        var panel = panelGo.AddComponent<RecordsPanel>();
+
+        var title = CreateText(panelGo.transform, "Title", "HALL OF FAME", 40, new Vector2(0.5f, 1f), new Vector2(0f, -36f), TextAnchor.UpperCenter, font, new Color(0.95f, 0.83f, 0.18f));
+        var message = CreateText(panelGo.transform, "Message", "", 26, new Vector2(0.5f, 1f), new Vector2(0f, -100f), TextAnchor.UpperCenter, font, Color.white);
+        message.rectTransform.sizeDelta = new Vector2(720f, 64f);
+        var name = CreateText(panelGo.transform, "Name", "", 36, new Vector2(0.5f, 1f), new Vector2(0f, -168f), TextAnchor.UpperCenter, font, new Color(0.18f, 0.8f, 0.44f));
+        var list = CreateText(panelGo.transform, "List", "", 26, new Vector2(0.5f, 1f), new Vector2(0f, -228f), TextAnchor.UpperCenter, font, new Color(0.85f, 0.87f, 0.92f));
+        list.rectTransform.sizeDelta = new Vector2(720f, 300f);
+
+        var panelSo = new SerializedObject(panel);
+        panelSo.FindProperty("titleText").objectReferenceValue = title;
+        panelSo.FindProperty("messageText").objectReferenceValue = message;
+        panelSo.FindProperty("nameText").objectReferenceValue = name;
+        panelSo.FindProperty("listText").objectReferenceValue = list;
+        panelSo.ApplyModifiedPropertiesWithoutUndo();
+
+        var manager = Object.FindAnyObjectByType<GameManager>();
+        var managerSo = new SerializedObject(manager);
+        managerSo.FindProperty("recordsPanel").objectReferenceValue = panel;
+        managerSo.ApplyModifiedPropertiesWithoutUndo();
+
+        panelGo.SetActive(false);
+
+        // Mark dirty but let the user save: a programmatic SaveScene here raised
+        // the modal "scene changed on disk" dialog and froze the Editor main thread.
+        EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
     }
 
     // Builds a caption ("SCORE") with a value line under it, anchored to the top
