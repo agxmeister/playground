@@ -6,6 +6,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
+// (currently ten of them, ending with the main menu panel)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -114,6 +115,24 @@ public static class ArkanoidSetup
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 8: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 9: main menu panel (title screen). Authored inactive, like the
+        // records panel, so the guard must include inactive objects.
+        if (Object.FindAnyObjectByType<MainMenuPanel>(FindObjectsInactive.Include) == null)
+        {
+            BuildMainMenu();
+            Debug.Log("[ArkanoidSetup] Stage 9: built the main menu panel (scene left dirty).");
+            return;
+        }
+
+        // Stage 10: persist stage 9's panel, with the same tick-deferred save
+        // as stage 8.
+        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains("MainMenuPanel"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 10: queued scene save for the next editor tick.");
         }
     }
 
@@ -122,7 +141,7 @@ public static class ArkanoidSetup
     {
         EditorApplication.update -= SaveSceneOnce;
         EditorSceneManager.SaveScene(SceneManager.GetActiveScene());
-        Debug.Log("[ArkanoidSetup] Stage 8: saved the scene with the records panel.");
+        Debug.Log("[ArkanoidSetup] Saved the scene on a deferred editor tick.");
     }
 
     static string ToAbsolute(string assetsRelativePath) =>
@@ -319,6 +338,45 @@ public static class ArkanoidSetup
 
         // Mark dirty but let the user save: a programmatic SaveScene here raised
         // the modal "scene changed on disk" dialog and froze the Editor main thread.
+        EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+    }
+
+    static void BuildMainMenu()
+    {
+        var canvas = GameObject.Find("ScoreBoard");
+        var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+        var panelGo = new GameObject("MainMenuPanel", typeof(RectTransform));
+        var rect = panelGo.GetComponent<RectTransform>();
+        rect.SetParent(canvas.transform, false);
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+        var background = panelGo.AddComponent<Image>();
+        background.color = new Color(0.04f, 0.06f, 0.1f, 0.97f);
+        var menu = panelGo.AddComponent<MainMenuPanel>();
+
+        var title = CreateText(panelGo.transform, "Title", "ARKANOID", 96, new Vector2(0.5f, 1f), new Vector2(0f, -260f), TextAnchor.UpperCenter, font, new Color(0.95f, 0.83f, 0.18f));
+        title.rectTransform.sizeDelta = new Vector2(900f, 110f);
+        var highScore = CreateText(panelGo.transform, "HighScore", "", 30, new Vector2(0.5f, 1f), new Vector2(0f, -410f), TextAnchor.UpperCenter, font, new Color(0.85f, 0.87f, 0.92f));
+        highScore.rectTransform.sizeDelta = new Vector2(720f, 48f);
+        var prompts = CreateText(panelGo.transform, "Prompts", "SPACE — start game\nR — hall of fame", 30, new Vector2(0.5f, 1f), new Vector2(0f, -510f), TextAnchor.UpperCenter, font, new Color(0.18f, 0.8f, 0.44f));
+        prompts.rectTransform.sizeDelta = new Vector2(720f, 120f);
+
+        var menuSo = new SerializedObject(menu);
+        menuSo.FindProperty("highScoreText").objectReferenceValue = highScore;
+        menuSo.ApplyModifiedPropertiesWithoutUndo();
+
+        var manager = Object.FindAnyObjectByType<GameManager>();
+        var managerSo = new SerializedObject(manager);
+        managerSo.FindProperty("mainMenuPanel").objectReferenceValue = menu;
+        managerSo.ApplyModifiedPropertiesWithoutUndo();
+
+        panelGo.SetActive(false);
+
+        // Mark dirty but defer the save to stage 10: a programmatic SaveScene
+        // here raised the modal "scene changed on disk" dialog before.
         EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
     }
 

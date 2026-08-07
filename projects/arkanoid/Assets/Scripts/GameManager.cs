@@ -12,6 +12,7 @@ public class GameManager : MonoBehaviour
     [SerializeField] Paddle paddle;
     [SerializeField] ScoreBoard scoreBoard;
     [SerializeField] RecordsPanel recordsPanel;
+    [SerializeField] MainMenuPanel mainMenuPanel;
 
     [SerializeField] int rows = 5;
     [SerializeField] int columns = 8;
@@ -26,7 +27,7 @@ public class GameManager : MonoBehaviour
         new Color(0.20f, 0.60f, 0.86f),
     };
 
-    enum State { Ready, Playing, EnteringName, GameOver, Won }
+    enum State { Menu, Ready, Playing, EnteringName, GameOver, Won }
 
     const int MaxNameLength = 12;
 
@@ -40,6 +41,7 @@ public class GameManager : MonoBehaviour
     int lives;
     int bricksLeft;
     string typedName = "";
+    bool menuShowingRecords;
 
     void Awake()
     {
@@ -49,13 +51,22 @@ public class GameManager : MonoBehaviour
 
     void Start()
     {
-        NewGame();
+        ShowMenu();
+    }
+
+    void ShowMenu()
+    {
+        menuShowingRecords = false;
+        if (recordsPanel != null) recordsPanel.Hide();
+        if (mainMenuPanel != null) mainMenuPanel.Show(highScore);
+        state = State.Menu;
     }
 
     void NewGame()
     {
         previousRecord = highScore;
         if (recordsPanel != null) recordsPanel.Hide();
+        if (mainMenuPanel != null) mainMenuPanel.Hide();
         SetScore(0);
         SetLives(startingLives);
         BuildLevel();
@@ -118,6 +129,25 @@ public class GameManager : MonoBehaviour
 
         switch (state)
         {
+            case State.Menu:
+                if (menuShowingRecords)
+                {
+                    bool pressedBack = keyboard != null
+                        && (keyboard.escapeKey.wasPressedThisFrame || keyboard.rKey.wasPressedThisFrame);
+                    if (pressedBack) ShowMenu();
+                    break;
+                }
+                if (pressedSpace)
+                {
+                    NewGame();
+                }
+                else if (keyboard != null && keyboard.rKey.wasPressedThisFrame)
+                {
+                    menuShowingRecords = true;
+                    if (mainMenuPanel != null) mainMenuPanel.Hide();
+                    if (recordsPanel != null) recordsPanel.ShowRecords(RecordBook.Load(), "ESC — back to menu");
+                }
+                break;
             case State.Ready:
                 if (pressedSpace)
                 {
@@ -135,7 +165,7 @@ public class GameManager : MonoBehaviour
                 break;
             case State.GameOver:
             case State.Won:
-                if (pressedSpace) NewGame();
+                if (pressedSpace) ShowMenu();
                 break;
         }
     }
@@ -187,8 +217,8 @@ public class GameManager : MonoBehaviour
     {
         state = endState;
         string message = endState == State.Won
-            ? $"YOU WIN! Score: {score} — press SPACE to play again"
-            : $"GAME OVER — Score: {score} — press SPACE to restart";
+            ? $"YOU WIN! Score: {score} — press SPACE for the menu"
+            : $"GAME OVER — Score: {score} — press SPACE for the menu";
         if (recordsPanel != null) recordsPanel.ShowRecords(RecordBook.Load(), message);
     }
 
