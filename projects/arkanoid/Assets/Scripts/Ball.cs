@@ -4,6 +4,9 @@ using UnityEngine;
 public class Ball : MonoBehaviour
 {
     [SerializeField] float speed = 8f;
+    [SerializeField] int damage = 1;
+
+    public int Damage => damage;
 
     // Below this fraction of speed the vertical component gets nudged, so the
     // ball can never settle into an endless horizontal bounce between the walls.

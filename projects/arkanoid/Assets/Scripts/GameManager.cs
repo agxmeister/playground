@@ -27,6 +27,9 @@ public class GameManager : MonoBehaviour
         new Color(0.20f, 0.60f, 0.86f),
     };
 
+    // Hardness per row, matching rowColors: red bricks take 3 hits, blue take 1.
+    static readonly int[] rowHardness = { 3, 2, 2, 1, 1 };
+
     enum State { Menu, Ready, Playing, EnteringName, GameOver, Won }
 
     const int MaxNameLength = 12;
@@ -109,6 +112,7 @@ public class GameManager : MonoBehaviour
                 var position = new Vector3(x0 + column * (width + gap), y0 - row * (height + gap), 0f);
                 var brick = Instantiate(brickPrefab, position, Quaternion.identity, brickHolder);
                 brick.Points = (rows - row) * 100;
+                brick.Hardness = rowHardness[row % rowHardness.Length];
                 brick.GetComponent<SpriteRenderer>().color = rowColors[row % rowColors.Length];
                 bricksLeft++;
             }
