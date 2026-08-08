@@ -9,7 +9,18 @@ public class Brick : MonoBehaviour
     [SerializeField] Sprite lightCrackSprite;
     [SerializeField] Sprite heavyCrackSprite;
 
+    static MaterialPropertyBlock colorBlock;
+
     int damage;
+
+    // Tints the brick body per instance without duplicating the shared
+    // URP Lit material ("_BaseColor" is its tint property).
+    public void SetColor(Color color)
+    {
+        colorBlock ??= new MaterialPropertyBlock();
+        colorBlock.SetColor("_BaseColor", color);
+        GetComponent<MeshRenderer>().SetPropertyBlock(colorBlock);
+    }
 
     void OnCollisionEnter2D(Collision2D collision)
     {

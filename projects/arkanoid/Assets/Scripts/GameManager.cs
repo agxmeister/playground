@@ -113,7 +113,7 @@ public class GameManager : MonoBehaviour
                 var brick = Instantiate(brickPrefab, position, Quaternion.identity, brickHolder);
                 brick.Points = (rows - row) * 100;
                 brick.Hardness = rowHardness[row % rowHardness.Length];
-                brick.GetComponent<SpriteRenderer>().color = rowColors[row % rowColors.Length];
+                brick.SetColor(rowColors[row % rowColors.Length]);
                 bricksLeft++;
             }
         }

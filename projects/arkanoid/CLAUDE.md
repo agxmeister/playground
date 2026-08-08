@@ -2,6 +2,8 @@
 
 Classic Arkanoid (Breakout) game. Unity `6000.5.6f1`, Universal Render Pipeline, new Input System.
 
+Gameplay is strictly 2D (2D physics on the XY plane) but the visuals are 3D: bricks, paddle and walls are box meshes, the ball is a sphere, all with URP Lit materials (`Assets/Materials`), lit by the scene's directional light in front of a shadow-catching `Backdrop` plane at z 0.6. The camera is perspective (FOV 50 at z −13.5, framing-equivalent to the old orthographic size 6). Bricks are tinted per instance via `MaterialPropertyBlock` (`Brick.SetColor`), and the crack overlay stays a `SpriteRenderer` child sitting just in front of the box's face.
+
 ## Layout
 
 - `Assets/Scripts/Paddle.cs` — keyboard paddle movement (`Keyboard.current`, arrows/A-D), clamped to the playfield.
@@ -16,7 +18,7 @@ Classic Arkanoid (Breakout) game. Unity `6000.5.6f1`, Universal Render Pipeline,
 
 ## Editor setup is staged and resumable
 
-`ArkanoidSetup.Setup()` performs **one** stage per domain reload and returns, relying on the next reload to observe the previous stage's output (textures → importers → physics material → prefabs → scene → scoreboard UI → records panel → deferred save → main menu panel → deferred save → crack textures → crack importers → brick-prefab crack overlay). The UI-panel stages (7 and 9) only mark the scene dirty; the follow-up stages (8 and 10) save it from a self-removing `EditorApplication.update` handler on the next editor tick, to avoid the modal dialog described below. This works around `AssetDatabase` writes not being reliably readable back via `LoadAssetAtPath` within the same call. If you touch this file, preserve the one-stage-per-reload structure. The scene stage is guarded by `GameObject.Find("GameManager")`, so once set up the whole method is a no-op.
+`ArkanoidSetup.Setup()` performs **one** stage per domain reload and returns, relying on the next reload to observe the previous stage's output (textures → importers → physics material → prefabs → scene → scoreboard UI → records panel → deferred save → main menu panel → deferred save → crack textures → crack importers → brick-prefab crack overlay → Lit materials → ball prefab to sphere → brick prefab to box → 3D scene retrofit → deferred save). The UI-panel stages (7 and 9) only mark the scene dirty; the follow-up stages (8 and 10) save it from a self-removing `EditorApplication.update` handler on the next editor tick, to avoid the modal dialog described below. This works around `AssetDatabase` writes not being reliably readable back via `LoadAssetAtPath` within the same call. If you touch this file, preserve the one-stage-per-reload structure. The scene stage is guarded by `GameObject.Find("GameManager")`, so once set up the whole method is a no-op.
 
 Folder existence is checked on disk (`System.IO.Directory`) rather than via `AssetDatabase.IsValidFolder`, which can go stale in driven sessions.
 

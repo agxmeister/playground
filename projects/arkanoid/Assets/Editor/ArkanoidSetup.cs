@@ -6,7 +6,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently thirteen of them, ending with the brick crack overlay)
+// (currently eighteen of them, ending with the 3D-look retrofit)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -15,6 +15,12 @@ public static class ArkanoidSetup
     const string SpritesFolder = "Assets/Sprites";
     const string PrefabsFolder = "Assets/Prefabs";
     const string PhysicsFolder = "Assets/Physics";
+    const string MaterialsFolder = "Assets/Materials";
+    const string BallMaterialPath = MaterialsFolder + "/Ball.mat";
+    const string BrickMaterialPath = MaterialsFolder + "/Brick.mat";
+    const string PaddleMaterialPath = MaterialsFolder + "/Paddle.mat";
+    const string WallMaterialPath = MaterialsFolder + "/Wall.mat";
+    const string BackdropMaterialPath = MaterialsFolder + "/Backdrop.mat";
     const string SquareTexturePath = SpritesFolder + "/Square.png";
     const string CircleTexturePath = SpritesFolder + "/Circle.png";
     const string CrackLightTexturePath = SpritesFolder + "/CrackLight.png";
@@ -170,6 +176,70 @@ public static class ArkanoidSetup
             }
             AddCracksToBrickPrefab(crackLight, crackHeavy);
             Debug.Log("[ArkanoidSetup] Stage 13: added the crack overlay to the brick prefab.");
+            return;
+        }
+
+        // Stages 14-18 retrofit a 3D look onto the 2D game: URP Lit materials,
+        // mesh visuals on the prefabs and scene objects, a perspective camera
+        // and a shadow-catching backdrop. Physics and gameplay stay 2D.
+
+        // Stage 14: shared materials.
+        if (!File.Exists(ToAbsolute(BallMaterialPath)) || !File.Exists(ToAbsolute(BrickMaterialPath))
+            || !File.Exists(ToAbsolute(PaddleMaterialPath)) || !File.Exists(ToAbsolute(WallMaterialPath))
+            || !File.Exists(ToAbsolute(BackdropMaterialPath)))
+        {
+            Directory.CreateDirectory(ToAbsolute(MaterialsFolder));
+            CreateLitMaterial(BallMaterialPath, new Color(0.9f, 0.9f, 0.95f));
+            CreateLitMaterial(BrickMaterialPath, Color.white); // tinted per brick at runtime
+            CreateLitMaterial(PaddleMaterialPath, new Color(0.85f, 0.87f, 0.92f));
+            CreateLitMaterial(WallMaterialPath, new Color(0.35f, 0.38f, 0.45f));
+            CreateLitMaterial(BackdropMaterialPath, new Color(0.09f, 0.11f, 0.17f));
+            Debug.Log("[ArkanoidSetup] Stage 14: created URP Lit materials.");
+            return;
+        }
+
+        // Stage 15: ball prefab gets a sphere mesh instead of the circle sprite.
+        var ballPrefabRoot = AssetDatabase.LoadAssetAtPath<GameObject>(BallPrefabPath);
+        if (ballPrefabRoot != null && ballPrefabRoot.GetComponent<SpriteRenderer>() != null)
+        {
+            var ballMaterial = AssetDatabase.LoadAssetAtPath<Material>(BallMaterialPath);
+            if (ballMaterial == null) return;
+            ConvertPrefabToMesh(BallPrefabPath, "New-Sphere.fbx", ballMaterial, 0.4f);
+            Debug.Log("[ArkanoidSetup] Stage 15: converted the ball prefab to a sphere mesh.");
+            return;
+        }
+
+        // Stage 16: brick prefab gets a box mesh; the crack overlay child moves
+        // onto the box's front face.
+        if (brickPrefabRoot != null && brickPrefabRoot.GetComponent<SpriteRenderer>() != null)
+        {
+            var brickMaterial = AssetDatabase.LoadAssetAtPath<Material>(BrickMaterialPath);
+            if (brickMaterial == null) return;
+            ConvertPrefabToMesh(BrickPrefabPath, "Cube.fbx", brickMaterial, 0.6f);
+            Debug.Log("[ArkanoidSetup] Stage 16: converted the brick prefab to a box mesh.");
+            return;
+        }
+
+        // Stage 17: perspective camera, mesh paddle and walls, backdrop plane.
+        var mainCamera = Camera.main;
+        if (mainCamera != null && mainCamera.orthographic)
+        {
+            var paddleMaterial = AssetDatabase.LoadAssetAtPath<Material>(PaddleMaterialPath);
+            var wallMaterial = AssetDatabase.LoadAssetAtPath<Material>(WallMaterialPath);
+            var backdropMaterial = AssetDatabase.LoadAssetAtPath<Material>(BackdropMaterialPath);
+            if (paddleMaterial == null || wallMaterial == null || backdropMaterial == null) return;
+            ConvertSceneTo3D(mainCamera, paddleMaterial, wallMaterial, backdropMaterial);
+            Debug.Log("[ArkanoidSetup] Stage 17: converted the scene to the 3D look (scene left dirty).");
+            return;
+        }
+
+        // Stage 18: persist stage 17, with the same tick-deferred save as
+        // stages 8 and 10. The scene file still says "orthographic: 1" until
+        // the perspective camera is saved.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("orthographic: 1"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 18: queued scene save for the next editor tick.");
         }
     }
 
@@ -337,6 +407,74 @@ public static class ArkanoidSetup
 
         PrefabUtility.SaveAsPrefabAsset(root, BrickPrefabPath);
         PrefabUtility.UnloadPrefabContents(root);
+    }
+
+    static void CreateLitMaterial(string path, Color color)
+    {
+        var material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        material.SetColor("_BaseColor", color);
+        AssetDatabase.CreateAsset(material, path);
+    }
+
+    // Swaps a prefab root's SpriteRenderer for a built-in mesh with a Lit
+    // material and gives it real depth via the Z scale. Colliders stay 2D, so
+    // gameplay is unaffected; the mesh is purely visual.
+    static void ConvertPrefabToMesh(string prefabPath, string builtinMeshName, Material material, float depth)
+    {
+        var root = PrefabUtility.LoadPrefabContents(prefabPath);
+        ConvertToMesh(root, builtinMeshName, material, depth);
+
+        // Keep the crack overlay sprite visible on the box's front face.
+        var cracks = root.transform.Find("Cracks");
+        if (cracks != null) cracks.localPosition = new Vector3(0f, 0f, -0.51f);
+
+        PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+        PrefabUtility.UnloadPrefabContents(root);
+    }
+
+    static void ConvertToMesh(GameObject go, string builtinMeshName, Material material, float depth)
+    {
+        var spriteRenderer = go.GetComponent<SpriteRenderer>();
+        if (spriteRenderer != null) Object.DestroyImmediate(spriteRenderer);
+        go.AddComponent<MeshFilter>().sharedMesh = Resources.GetBuiltinResource<Mesh>(builtinMeshName);
+        go.AddComponent<MeshRenderer>().sharedMaterial = material;
+        var scale = go.transform.localScale;
+        scale.z = depth;
+        go.transform.localScale = scale;
+    }
+
+    static void ConvertSceneTo3D(Camera camera, Material paddleMaterial, Material wallMaterial, Material backdropMaterial)
+    {
+        // Same framing as the old orthographic size 6: half-height at the
+        // gameplay plane is distance * tan(fov/2) = 13.5 * tan(25) ~ 6.3.
+        camera.orthographic = false;
+        camera.fieldOfView = 50f;
+        camera.transform.position = new Vector3(0f, 0f, -13.5f);
+
+        ConvertToMesh(GameObject.Find("Paddle"), "Cube.fbx", paddleMaterial, 0.5f);
+        foreach (var wallName in new[] { "Left", "Right", "Top" })
+            ConvertToMesh(GameObject.Find(wallName), "Cube.fbx", wallMaterial, 0.6f);
+
+        // A plane behind the playfield that catches the objects' shadows —
+        // the main depth cue. No collider: it is scenery only.
+        var backdrop = new GameObject("Backdrop");
+        backdrop.transform.position = new Vector3(0f, 0f, 0.6f);
+        backdrop.transform.localScale = new Vector3(17f, 14f, 0.2f);
+        backdrop.AddComponent<MeshFilter>().sharedMesh = Resources.GetBuiltinResource<Mesh>("Cube.fbx");
+        backdrop.AddComponent<MeshRenderer>().sharedMaterial = backdropMaterial;
+
+        // The URP template scene ships with a directional light; create one
+        // only if this scene somehow lacks it.
+        if (Object.FindAnyObjectByType<Light>(FindObjectsInactive.Include) == null)
+        {
+            var lightGo = new GameObject("Directional Light");
+            var light = lightGo.AddComponent<Light>();
+            light.type = LightType.Directional;
+            light.shadows = LightShadows.Soft;
+            lightGo.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+        }
+
+        EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
     }
 
     static void BuildScene(Sprite squareSprite, GameObject ballPrefab, GameObject brickPrefab)
