@@ -6,7 +6,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently twenty of them, ending with the squared wall corners)
+// (currently twenty-seven of them, ending with the world-UV wall meshes)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -21,6 +21,13 @@ public static class ArkanoidSetup
     const string PaddleMaterialPath = MaterialsFolder + "/Paddle.mat";
     const string WallMaterialPath = MaterialsFolder + "/Wall.mat";
     const string BackdropMaterialPath = MaterialsFolder + "/Backdrop.mat";
+    const string TexturesFolder = "Assets/Textures";
+    const string BrickWallTexturePath = TexturesFolder + "/BrickWall.png";
+    const string WallSideMaterialPath = MaterialsFolder + "/WallSide.mat";
+    const string WallTopMaterialPath = MaterialsFolder + "/WallTop.mat";
+    const string MeshesFolder = "Assets/Meshes";
+    const string WallSideMeshPath = MeshesFolder + "/WallSide.asset";
+    const string WallTopMeshPath = MeshesFolder + "/WallTop.asset";
     const string SquareTexturePath = SpritesFolder + "/Square.png";
     const string CircleTexturePath = SpritesFolder + "/Circle.png";
     const string CrackLightTexturePath = SpritesFolder + "/CrackLight.png";
@@ -245,8 +252,9 @@ public static class ArkanoidSetup
 
         // Stage 19: shorten the side walls so they butt against the top
         // wall's underside (y 5.5) instead of overlapping it in the corners —
-        // coplanar overlap z-fights and shows through, and anything taller
-        // than the top wall pokes into the perspective camera's view.
+        // coplanar overlap z-fights and shows through. 12 units tall keeps a
+        // whole number of 0.25-unit brick rows, so the side material's
+        // vertical tiling follows suit when it already exists.
         var leftWall = GameObject.Find("Left");
         if (leftWall != null && leftWall.transform.localScale.y > 12.1f)
         {
@@ -255,6 +263,13 @@ public static class ArkanoidSetup
                 var wall = GameObject.Find(wallName).transform;
                 wall.position = new Vector3(wall.position.x, -0.5f, wall.position.z);
                 wall.localScale = new Vector3(wall.localScale.x, 12f, wall.localScale.z);
+            }
+            var sideMaterial = AssetDatabase.LoadAssetAtPath<Material>(WallSideMaterialPath);
+            if (sideMaterial != null)
+            {
+                sideMaterial.SetTextureScale("_BaseMap", new Vector2(0.5f, 12f));
+                EditorUtility.SetDirty(sideMaterial);
+                AssetDatabase.SaveAssets();
             }
             EditorSceneManager.MarkSceneDirty(scene);
             Debug.Log("[ArkanoidSetup] Stage 19: butted the side walls under the top wall (scene left dirty).");
@@ -267,6 +282,109 @@ public static class ArkanoidSetup
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 20: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 21: tileable brick-masonry texture for the walls.
+        if (!File.Exists(ToAbsolute(BrickWallTexturePath)))
+        {
+            WriteBrickWallTexture();
+            AssetDatabase.Refresh();
+            Debug.Log("[ArkanoidSetup] Stage 21: wrote the brick wall texture.");
+            return;
+        }
+
+        // Stage 22: textured wall materials. Tiling stays 1:1 — the wall
+        // meshes carry world-unit UVs (stage 26), so the 1-unit texture maps
+        // at brick scale on every face without per-material tiling.
+        if (!File.Exists(ToAbsolute(WallSideMaterialPath)) || !File.Exists(ToAbsolute(WallTopMaterialPath)))
+        {
+            var brickWallTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(BrickWallTexturePath);
+            if (brickWallTexture == null)
+            {
+                Debug.Log("[ArkanoidSetup] Brick wall texture not importable yet, waiting for next reload.");
+                return;
+            }
+            CreateTexturedWallMaterial(WallSideMaterialPath, brickWallTexture, Vector2.one);
+            CreateTexturedWallMaterial(WallTopMaterialPath, brickWallTexture, Vector2.one);
+            Debug.Log("[ArkanoidSetup] Stage 22: created the textured wall materials.");
+            return;
+        }
+
+        // Stage 23: swap the walls onto the textured materials.
+        var leftWallRenderer = leftWall != null ? leftWall.GetComponent<MeshRenderer>() : null;
+        if (leftWallRenderer != null && leftWallRenderer.sharedMaterial != null
+            && leftWallRenderer.sharedMaterial.name == "Wall")
+        {
+            var wallSideMaterial = AssetDatabase.LoadAssetAtPath<Material>(WallSideMaterialPath);
+            var wallTopMaterial = AssetDatabase.LoadAssetAtPath<Material>(WallTopMaterialPath);
+            if (wallSideMaterial == null || wallTopMaterial == null) return;
+            leftWallRenderer.sharedMaterial = wallSideMaterial;
+            GameObject.Find("Right").GetComponent<MeshRenderer>().sharedMaterial = wallSideMaterial;
+            GameObject.Find("Top").GetComponent<MeshRenderer>().sharedMaterial = wallTopMaterial;
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 23: applied the brick texture to the walls (scene left dirty).");
+            return;
+        }
+
+        // Stage 24: persist stage 23, gated on the scene file not yet
+        // referencing the side-wall material asset.
+        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains(AssetDatabase.AssetPathToGUID(WallSideMaterialPath)))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 24: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 25: wall meshes with world-unit UVs. A scaled stock cube maps
+        // its material tiling onto all six faces, so small faces (the top
+        // wall's end caps, the side walls' tops) show the texture squeezed
+        // into stripes. These meshes are authored at final size with each
+        // face's UVs equal to its world dimensions, so the 1-unit brick
+        // texture is brick-scale on every face.
+        if (!File.Exists(ToAbsolute(WallSideMeshPath)) || !File.Exists(ToAbsolute(WallTopMeshPath)))
+        {
+            Directory.CreateDirectory(ToAbsolute(MeshesFolder));
+            AssetDatabase.CreateAsset(BuildWallMesh("WallSide", 0.5f, 12f, 0.6f), WallSideMeshPath);
+            AssetDatabase.CreateAsset(BuildWallMesh("WallTop", 16f, 0.5f, 0.6f), WallTopMeshPath);
+            Debug.Log("[ArkanoidSetup] Stage 25: created the wall meshes with world-unit UVs.");
+            return;
+        }
+
+        // Stage 26: swap the walls onto the world-UV meshes. The meshes are
+        // authored at final size, so the transforms drop to unit scale and the
+        // 2D colliders get their sizes set explicitly (they no longer inherit
+        // them from the scale). Also resets the materials to 1:1 tiling.
+        var leftWallFilter = leftWall != null ? leftWall.GetComponent<MeshFilter>() : null;
+        if (leftWallFilter != null && leftWallFilter.sharedMesh != null && leftWallFilter.sharedMesh.name == "Cube")
+        {
+            var sideMesh = AssetDatabase.LoadAssetAtPath<Mesh>(WallSideMeshPath);
+            var topMesh = AssetDatabase.LoadAssetAtPath<Mesh>(WallTopMeshPath);
+            if (sideMesh == null || topMesh == null) return;
+
+            foreach (var wallName in new[] { "Left", "Right" })
+                ApplyWallMesh(GameObject.Find(wallName), sideMesh, new Vector2(0.5f, 12f));
+            ApplyWallMesh(GameObject.Find("Top"), topMesh, new Vector2(16f, 0.5f));
+
+            foreach (var materialPath in new[] { WallSideMaterialPath, WallTopMaterialPath })
+            {
+                var material = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+                material.SetTextureScale("_BaseMap", Vector2.one);
+                EditorUtility.SetDirty(material);
+            }
+            AssetDatabase.SaveAssets();
+
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 26: applied the world-UV meshes to the walls (scene left dirty).");
+            return;
+        }
+
+        // Stage 27: persist stage 26, gated on the old scaled-cube wall
+        // transform still being in the scene file.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("{x: 0.5, y: 12, z: 0.6}"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 27: queued scene save for the next editor tick.");
         }
     }
 
@@ -434,6 +552,88 @@ public static class ArkanoidSetup
 
         PrefabUtility.SaveAsPrefabAsset(root, BrickPrefabPath);
         PrefabUtility.UnloadPrefabContents(root);
+    }
+
+    // 128 px = 1 world unit: four rows of 64x32 px bricks (0.5 x 0.25 units)
+    // in a running bond, drawn in grayscale so the material tint supplies the
+    // color. Brightness varies per brick; mortar lines are darker.
+    static void WriteBrickWallTexture()
+    {
+        const int size = 128, rowHeight = 32, brickWidth = 64, mortar = 3;
+        var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        for (int y = 0; y < size; y++)
+        {
+            int row = y / rowHeight;
+            int offset = row % 2 * (brickWidth / 2);
+            for (int x = 0; x < size; x++)
+            {
+                int shifted = (x + offset) % size;
+                bool isMortar = y % rowHeight < mortar || shifted % brickWidth < mortar;
+                float value = 0.55f;
+                if (!isMortar)
+                {
+                    int brickIndex = shifted / brickWidth + row * 3;
+                    value = 0.82f + 0.18f * (brickIndex * 37 % 5 / 4f);
+                }
+                texture.SetPixel(x, y, new Color(value, value, value, 1f));
+            }
+        }
+        texture.Apply();
+        Directory.CreateDirectory(ToAbsolute(TexturesFolder));
+        File.WriteAllBytes(ToAbsolute(BrickWallTexturePath), texture.EncodeToPNG());
+        Object.DestroyImmediate(texture);
+    }
+
+    static void ApplyWallMesh(GameObject wall, Mesh mesh, Vector2 colliderSize)
+    {
+        wall.GetComponent<MeshFilter>().sharedMesh = mesh;
+        wall.transform.localScale = Vector3.one;
+        wall.GetComponent<BoxCollider2D>().size = colliderSize;
+    }
+
+    // A box authored at final size whose UVs equal each face's world
+    // dimensions, so a 1-world-unit texture tiles at natural scale on every
+    // face. Corner positions are listed as seen from outside the face
+    // (bottom-left, bottom-right, top-right, top-left).
+    static Mesh BuildWallMesh(string name, float width, float height, float depth)
+    {
+        float hw = width / 2f, hh = height / 2f, hd = depth / 2f;
+        var mesh = new Mesh { name = name };
+        var vertices = new System.Collections.Generic.List<Vector3>();
+        var uvs = new System.Collections.Generic.List<Vector2>();
+        var triangles = new System.Collections.Generic.List<int>();
+
+        void Face(Vector3 bottomLeft, Vector3 bottomRight, Vector3 topRight, Vector3 topLeft, float u, float v)
+        {
+            int start = vertices.Count;
+            vertices.Add(bottomLeft); vertices.Add(bottomRight); vertices.Add(topRight); vertices.Add(topLeft);
+            uvs.Add(new Vector2(0f, 0f)); uvs.Add(new Vector2(u, 0f)); uvs.Add(new Vector2(u, v)); uvs.Add(new Vector2(0f, v));
+            triangles.Add(start); triangles.Add(start + 2); triangles.Add(start + 1);
+            triangles.Add(start); triangles.Add(start + 3); triangles.Add(start + 2);
+        }
+
+        Face(new Vector3(-hw, -hh, -hd), new Vector3(hw, -hh, -hd), new Vector3(hw, hh, -hd), new Vector3(-hw, hh, -hd), width, height);  // front (-Z)
+        Face(new Vector3(hw, -hh, hd), new Vector3(-hw, -hh, hd), new Vector3(-hw, hh, hd), new Vector3(hw, hh, hd), width, height);      // back (+Z)
+        Face(new Vector3(-hw, hh, -hd), new Vector3(hw, hh, -hd), new Vector3(hw, hh, hd), new Vector3(-hw, hh, hd), width, depth);       // top (+Y)
+        Face(new Vector3(-hw, -hh, hd), new Vector3(hw, -hh, hd), new Vector3(hw, -hh, -hd), new Vector3(-hw, -hh, -hd), width, depth);   // bottom (-Y)
+        Face(new Vector3(hw, -hh, -hd), new Vector3(hw, -hh, hd), new Vector3(hw, hh, hd), new Vector3(hw, hh, -hd), depth, height);      // right (+X)
+        Face(new Vector3(-hw, -hh, hd), new Vector3(-hw, -hh, -hd), new Vector3(-hw, hh, -hd), new Vector3(-hw, hh, hd), depth, height);  // left (-X)
+
+        mesh.SetVertices(vertices);
+        mesh.SetUVs(0, uvs);
+        mesh.SetTriangles(triangles, 0);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    static void CreateTexturedWallMaterial(string path, Texture2D texture, Vector2 tiling)
+    {
+        var material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        material.SetColor("_BaseColor", new Color(0.35f, 0.38f, 0.45f));
+        material.SetTexture("_BaseMap", texture);
+        material.SetTextureScale("_BaseMap", tiling);
+        AssetDatabase.CreateAsset(material, path);
     }
 
     static void CreateLitMaterial(string path, Color color)
