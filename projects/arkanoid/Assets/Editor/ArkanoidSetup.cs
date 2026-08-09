@@ -6,7 +6,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently eighteen of them, ending with the 3D-look retrofit)
+// (currently twenty of them, ending with the squared wall corners)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -240,6 +240,33 @@ public static class ArkanoidSetup
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 18: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 19: shorten the side walls so they butt against the top
+        // wall's underside (y 5.5) instead of overlapping it in the corners —
+        // coplanar overlap z-fights and shows through, and anything taller
+        // than the top wall pokes into the perspective camera's view.
+        var leftWall = GameObject.Find("Left");
+        if (leftWall != null && leftWall.transform.localScale.y > 12.1f)
+        {
+            foreach (var wallName in new[] { "Left", "Right" })
+            {
+                var wall = GameObject.Find(wallName).transform;
+                wall.position = new Vector3(wall.position.x, -0.5f, wall.position.z);
+                wall.localScale = new Vector3(wall.localScale.x, 12f, wall.localScale.z);
+            }
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 19: butted the side walls under the top wall (scene left dirty).");
+            return;
+        }
+
+        // Stage 20: persist stage 19, gated on the old wall scale still being
+        // in the scene file.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("{x: 0.5, y: 13, z: 0.6}"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 20: queued scene save for the next editor tick.");
         }
     }
 
@@ -491,8 +518,11 @@ public static class ArkanoidSetup
 
         var walls = new GameObject("Walls");
         var wallColor = new Color(0.35f, 0.38f, 0.45f);
-        CreateWall(walls.transform, "Left", new Vector3(-7.75f, 0f, 0f), new Vector3(0.5f, 13f, 1f), squareSprite, wallColor);
-        CreateWall(walls.transform, "Right", new Vector3(7.75f, 0f, 0f), new Vector3(0.5f, 13f, 1f), squareSprite, wallColor);
+        // Side walls butt against the top wall's underside (y 5.5) instead of
+        // overlapping it: coplanar overlap z-fights, and anything taller than
+        // the top wall pokes into the camera's view.
+        CreateWall(walls.transform, "Left", new Vector3(-7.75f, -0.5f, 0f), new Vector3(0.5f, 12f, 1f), squareSprite, wallColor);
+        CreateWall(walls.transform, "Right", new Vector3(7.75f, -0.5f, 0f), new Vector3(0.5f, 12f, 1f), squareSprite, wallColor);
         CreateWall(walls.transform, "Top", new Vector3(0f, 5.75f, 0f), new Vector3(16f, 0.5f, 1f), squareSprite, wallColor);
 
         var paddleGo = new GameObject("Paddle");
