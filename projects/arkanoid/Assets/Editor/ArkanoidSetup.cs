@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -6,7 +7,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently twenty-seven of them, ending with the world-UV wall meshes)
+// (currently twenty-eight of them, ending with the randomized crack variants)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -30,8 +31,10 @@ public static class ArkanoidSetup
     const string WallTopMeshPath = MeshesFolder + "/WallTop.asset";
     const string SquareTexturePath = SpritesFolder + "/Square.png";
     const string CircleTexturePath = SpritesFolder + "/Circle.png";
-    const string CrackLightTexturePath = SpritesFolder + "/CrackLight.png";
-    const string CrackHeavyTexturePath = SpritesFolder + "/CrackHeavy.png";
+    // Pre-variant crack textures, removed by the stage-28 retrofit.
+    const string LegacyCrackLightTexturePath = SpritesFolder + "/CrackLight.png";
+    const string LegacyCrackHeavyTexturePath = SpritesFolder + "/CrackHeavy.png";
+    const int CrackVariantCount = 4;
     const string BouncyMaterialPath = PhysicsFolder + "/Bouncy.physicsMaterial2D";
     const string BallPrefabPath = PrefabsFolder + "/Ball.prefab";
     const string BrickPrefabPath = PrefabsFolder + "/Brick.prefab";
@@ -151,37 +154,46 @@ public static class ArkanoidSetup
             return;
         }
 
-        // Stage 11: crack overlay textures on disk.
-        if (!File.Exists(ToAbsolute(CrackLightTexturePath)) || !File.Exists(ToAbsolute(CrackHeavyTexturePath)))
+        // Stage 11: crack overlay textures on disk, one light/heavy pair per
+        // random shape variant.
+        bool crackTexturesMissing = false;
+        for (int variant = 0; variant < CrackVariantCount; variant++)
+            crackTexturesMissing |= !File.Exists(ToAbsolute(CrackTexturePath("Light", variant)))
+                || !File.Exists(ToAbsolute(CrackTexturePath("Heavy", variant)));
+        if (crackTexturesMissing)
         {
             WriteCrackTextures();
             AssetDatabase.Refresh();
-            Debug.Log("[ArkanoidSetup] Stage 11: wrote crack textures.");
+            Debug.Log("[ArkanoidSetup] Stage 11: wrote the crack texture variants.");
             return;
         }
 
         // Stage 12: import crack textures as 1-unit sprites.
-        bool crackLightReady = ConfigureSpriteImporter(CrackLightTexturePath, 32);
-        bool crackHeavyReady = ConfigureSpriteImporter(CrackHeavyTexturePath, 32);
-        if (!crackLightReady || !crackHeavyReady)
+        bool cracksImported = true;
+        for (int variant = 0; variant < CrackVariantCount; variant++)
+        {
+            cracksImported &= ConfigureSpriteImporter(CrackTexturePath("Light", variant), 32);
+            cracksImported &= ConfigureSpriteImporter(CrackTexturePath("Heavy", variant), 32);
+        }
+        if (!cracksImported)
         {
             Debug.Log("[ArkanoidSetup] Stage 12: configured crack sprite importers.");
             return;
         }
 
         // Stage 13: crack overlay child on the brick prefab, with the crack
-        // sprites wired into the Brick component.
+        // sprite variants wired into the Brick component.
         var brickPrefabRoot = AssetDatabase.LoadAssetAtPath<GameObject>(BrickPrefabPath);
         if (brickPrefabRoot != null && brickPrefabRoot.transform.Find("Cracks") == null)
         {
-            var crackLight = AssetDatabase.LoadAssetAtPath<Sprite>(CrackLightTexturePath);
-            var crackHeavy = AssetDatabase.LoadAssetAtPath<Sprite>(CrackHeavyTexturePath);
-            if (crackLight == null || crackHeavy == null)
+            var lightCracks = LoadCrackSprites("Light");
+            var heavyCracks = LoadCrackSprites("Heavy");
+            if (lightCracks == null || heavyCracks == null)
             {
                 Debug.Log("[ArkanoidSetup] Crack sprites not importable yet, waiting for next reload.");
                 return;
             }
-            AddCracksToBrickPrefab(crackLight, crackHeavy);
+            AddCracksToBrickPrefab(lightCracks, heavyCracks);
             Debug.Log("[ArkanoidSetup] Stage 13: added the crack overlay to the brick prefab.");
             return;
         }
@@ -385,6 +397,27 @@ public static class ArkanoidSetup
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 27: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 28: randomized-crack retrofit — the brick prefab predates the
+        // per-variant sprite arrays on Brick, so wire them in and drop the old
+        // single light/heavy texture pair.
+        if (brickPrefabRoot != null && brickPrefabRoot.transform.Find("Cracks") != null
+            && new SerializedObject(brickPrefabRoot.GetComponent<Brick>())
+                .FindProperty("lightCrackSprites").arraySize == 0)
+        {
+            var lightCracks = LoadCrackSprites("Light");
+            var heavyCracks = LoadCrackSprites("Heavy");
+            if (lightCracks == null || heavyCracks == null)
+            {
+                Debug.Log("[ArkanoidSetup] Crack sprites not importable yet, waiting for next reload.");
+                return;
+            }
+            WireCrackSpritesIntoBrickPrefab(lightCracks, heavyCracks);
+            AssetDatabase.DeleteAsset(LegacyCrackLightTexturePath);
+            AssetDatabase.DeleteAsset(LegacyCrackHeavyTexturePath);
+            Debug.Log("[ArkanoidSetup] Stage 28: wired the crack variants into the brick prefab.");
         }
     }
 
@@ -436,27 +469,74 @@ public static class ArkanoidSetup
         Object.DestroyImmediate(texture);
     }
 
-    // Two damage states drawn as jagged dark polylines on a transparent
-    // background: the heavy texture extends the light one, so escalating
-    // damage reads as the same crack spreading.
+    static string CrackTexturePath(string weight, int variant) =>
+        SpritesFolder + "/Crack" + weight + variant + ".png";
+
+    // Each variant is a light/heavy pair of jagged dark polylines on a
+    // transparent background, generated from a per-variant seeded random walk
+    // so every variant has its own shape while a from-scratch rebuild
+    // reproduces the same set. The heavy texture extends the light one, so
+    // escalating damage reads as the same crack spreading.
     static void WriteCrackTextures()
     {
-        var lightPolylines = new[]
+        for (int variant = 0; variant < CrackVariantCount; variant++)
         {
-            new[] { new Vector2Int(18, 31), new Vector2Int(14, 23), new Vector2Int(19, 15), new Vector2Int(13, 6) },
-            new[] { new Vector2Int(14, 23), new Vector2Int(8, 19) },
-        };
-        var heavyPolylines = new[]
+            var random = new System.Random(2026 + variant);
+            var polylines = new List<Vector2Int[]>();
+
+            // Light: one main crack running down from the top edge, plus a
+            // short side branch.
+            var main = RandomCrackPolyline(random, new Vector2Int(random.Next(9, 24), 31), random.Next(3, 5));
+            polylines.Add(main);
+            polylines.Add(RandomCrackBranch(random, main));
+            WriteCrackTexture(CrackTexturePath("Light", variant), polylines.ToArray());
+
+            // Heavy: two more branches off the main crack plus an independent
+            // secondary crack from the top or bottom edge.
+            polylines.Add(RandomCrackBranch(random, main));
+            polylines.Add(RandomCrackBranch(random, main));
+            bool fromBottom = random.Next(2) == 0;
+            polylines.Add(RandomCrackPolyline(
+                random, new Vector2Int(random.Next(3, 29), fromBottom ? 0 : 31), 2, fromBottom));
+            WriteCrackTexture(CrackTexturePath("Heavy", variant), polylines.ToArray());
+        }
+    }
+
+    // A jagged crack path: from `start`, each segment drops 5-9 px (rises
+    // instead when `up`) with a random horizontal swing.
+    static Vector2Int[] RandomCrackPolyline(System.Random random, Vector2Int start, int segments, bool up = false)
+    {
+        var points = new Vector2Int[segments + 1];
+        points[0] = start;
+        var point = start;
+        for (int i = 1; i <= segments; i++)
         {
-            lightPolylines[0],
-            new[] { new Vector2Int(14, 23), new Vector2Int(8, 19), new Vector2Int(3, 12) },
-            new[] { new Vector2Int(19, 15), new Vector2Int(25, 11), new Vector2Int(29, 4) },
-            new[] { new Vector2Int(13, 6), new Vector2Int(17, 0) },
-            new[] { new Vector2Int(5, 31), new Vector2Int(9, 25), new Vector2Int(6, 18) },
-            new[] { new Vector2Int(27, 30), new Vector2Int(23, 24), new Vector2Int(26, 18) },
-        };
-        WriteCrackTexture(CrackLightTexturePath, lightPolylines);
-        WriteCrackTexture(CrackHeavyTexturePath, heavyPolylines);
+            point = new Vector2Int(
+                Mathf.Clamp(point.x + random.Next(-6, 7), 1, 30),
+                Mathf.Clamp(point.y + (up ? 1 : -1) * random.Next(5, 10), 0, 31));
+            points[i] = point;
+        }
+        return points;
+    }
+
+    // A short branch splitting sideways off a random interior vertex of the
+    // parent crack.
+    static Vector2Int[] RandomCrackBranch(System.Random random, Vector2Int[] parent)
+    {
+        var from = parent[random.Next(1, parent.Length - 1)];
+        int direction = random.Next(2) == 0 ? -1 : 1;
+        int segments = random.Next(1, 3);
+        var points = new Vector2Int[segments + 1];
+        points[0] = from;
+        var point = from;
+        for (int i = 1; i <= segments; i++)
+        {
+            point = new Vector2Int(
+                Mathf.Clamp(point.x + direction * random.Next(4, 8), 1, 30),
+                Mathf.Clamp(point.y - random.Next(-2, 6), 0, 31));
+            points[i] = point;
+        }
+        return points;
     }
 
     static void WriteCrackTexture(string path, Vector2Int[][] polylines)
@@ -533,10 +613,23 @@ public static class ArkanoidSetup
         Object.DestroyImmediate(go);
     }
 
+    // All sprites of one weight ("Light"/"Heavy"), or null while any variant
+    // is still unimportable.
+    static Sprite[] LoadCrackSprites(string weight)
+    {
+        var sprites = new Sprite[CrackVariantCount];
+        for (int variant = 0; variant < CrackVariantCount; variant++)
+        {
+            sprites[variant] = AssetDatabase.LoadAssetAtPath<Sprite>(CrackTexturePath(weight, variant));
+            if (sprites[variant] == null) return null;
+        }
+        return sprites;
+    }
+
     // The child inherits the brick root's 1.5x0.5 scale, so the 1-unit crack
     // sprite stretches to cover the brick exactly. The renderer starts with no
-    // sprite; Brick swaps in light/heavy crack sprites as damage accumulates.
-    static void AddCracksToBrickPrefab(Sprite crackLight, Sprite crackHeavy)
+    // sprite; Brick swaps in a light/heavy crack variant as damage accumulates.
+    static void AddCracksToBrickPrefab(Sprite[] lightCracks, Sprite[] heavyCracks)
     {
         var root = PrefabUtility.LoadPrefabContents(BrickPrefabPath);
         var cracksGo = new GameObject("Cracks");
@@ -546,12 +639,38 @@ public static class ArkanoidSetup
 
         var so = new SerializedObject(root.GetComponent<Brick>());
         so.FindProperty("crackRenderer").objectReferenceValue = renderer;
-        so.FindProperty("lightCrackSprite").objectReferenceValue = crackLight;
-        so.FindProperty("heavyCrackSprite").objectReferenceValue = crackHeavy;
+        SetCrackSpriteArrays(so, lightCracks, heavyCracks);
         so.ApplyModifiedPropertiesWithoutUndo();
 
         PrefabUtility.SaveAsPrefabAsset(root, BrickPrefabPath);
         PrefabUtility.UnloadPrefabContents(root);
+    }
+
+    // Stage-28 retrofit path: the Cracks child already exists, only the
+    // variant arrays need wiring.
+    static void WireCrackSpritesIntoBrickPrefab(Sprite[] lightCracks, Sprite[] heavyCracks)
+    {
+        var root = PrefabUtility.LoadPrefabContents(BrickPrefabPath);
+        var so = new SerializedObject(root.GetComponent<Brick>());
+        SetCrackSpriteArrays(so, lightCracks, heavyCracks);
+        so.ApplyModifiedPropertiesWithoutUndo();
+        PrefabUtility.SaveAsPrefabAsset(root, BrickPrefabPath);
+        PrefabUtility.UnloadPrefabContents(root);
+    }
+
+    static void SetCrackSpriteArrays(SerializedObject so, Sprite[] lightCracks, Sprite[] heavyCracks)
+    {
+        foreach (var (field, sprites) in new[]
+        {
+            ("lightCrackSprites", lightCracks),
+            ("heavyCrackSprites", heavyCracks),
+        })
+        {
+            var property = so.FindProperty(field);
+            property.arraySize = sprites.Length;
+            for (int i = 0; i < sprites.Length; i++)
+                property.GetArrayElementAtIndex(i).objectReferenceValue = sprites[i];
+        }
     }
 
     // 128 px = 1 world unit: four rows of 64x32 px bricks (0.5 x 0.25 units)

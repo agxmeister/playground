@@ -6,12 +6,13 @@ public class Brick : MonoBehaviour
     public int Hardness { get; set; } = 1;
 
     [SerializeField] SpriteRenderer crackRenderer;
-    [SerializeField] Sprite lightCrackSprite;
-    [SerializeField] Sprite heavyCrackSprite;
+    [SerializeField] Sprite[] lightCrackSprites;
+    [SerializeField] Sprite[] heavyCrackSprites;
 
     static MaterialPropertyBlock colorBlock;
 
     int damage;
+    int crackVariant = -1;
 
     // Tints the brick body per instance without duplicating the shared
     // URP Lit material ("_BaseColor" is its tint property).
@@ -40,8 +41,17 @@ public class Brick : MonoBehaviour
             return;
         }
 
-        if (crackRenderer == null) return;
+        if (crackRenderer == null || lightCrackSprites == null || lightCrackSprites.Length == 0) return;
+
+        // The variant (and its mirroring) is picked on the first hit and then
+        // kept, so escalating damage reads as the same crack spreading.
+        if (crackVariant < 0)
+        {
+            crackVariant = Random.Range(0, lightCrackSprites.Length);
+            crackRenderer.flipX = Random.value < 0.5f;
+            crackRenderer.flipY = Random.value < 0.5f;
+        }
         float fraction = (float)damage / Hardness;
-        crackRenderer.sprite = fraction <= 0.5f ? lightCrackSprite : heavyCrackSprite;
+        crackRenderer.sprite = fraction <= 0.5f ? lightCrackSprites[crackVariant] : heavyCrackSprites[crackVariant];
     }
 }

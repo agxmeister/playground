@@ -95,8 +95,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Brick
   crackRenderer: {fileID: 1657365671126578837}
-  lightCrackSprite: {fileID: 21300000, guid: f06ab554924914b0cade979a4f72f788, type: 3}
-  heavyCrackSprite: {fileID: 21300000, guid: b8787b64af10d475892cf9083811eb8a, type: 3}
+  lightCrackSprites:
+  - {fileID: 21300000, guid: 8df5bad99ce074a32953a9c8e30ac4e7, type: 3}
+  - {fileID: 21300000, guid: 2daf53879dee74636a93769f6e1e2b7a, type: 3}
+  - {fileID: 21300000, guid: e085de3df903f4fcd9a9a288fbf26c78, type: 3}
+  - {fileID: 21300000, guid: f0372990e8b664f27b310f520dda5ede, type: 3}
+  heavyCrackSprites:
+  - {fileID: 21300000, guid: b3ca8fbf2190e4515a77c1ad6f89a1e4, type: 3}
+  - {fileID: 21300000, guid: 70618fdaaecff4b3fa28ea883c96f602, type: 3}
+  - {fileID: 21300000, guid: 055df5689f2f449d180db4807e636527, type: 3}
+  - {fileID: 21300000, guid: ed6c73e19a838469da1c5ac544f5afa4, type: 3}
 --- !u!33 &2102211389210893400
 MeshFilter:
   m_ObjectHideFlags: 0
