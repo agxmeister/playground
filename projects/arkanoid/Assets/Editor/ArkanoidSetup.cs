@@ -7,7 +7,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently twenty-eight of them, ending with the randomized crack variants)
+// (currently thirty-one of them, ending with the rounded paddle corners)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -29,6 +29,15 @@ public static class ArkanoidSetup
     const string MeshesFolder = "Assets/Meshes";
     const string WallSideMeshPath = MeshesFolder + "/WallSide.asset";
     const string WallTopMeshPath = MeshesFolder + "/WallTop.asset";
+    const string PaddleMeshPath = MeshesFolder + "/Paddle.asset";
+    // The paddle's world size and the radius of its rounded corners. The
+    // collider is a box shrunk by the radius on every side with edgeRadius
+    // filling it back out, which is exactly the same rounded rectangle.
+    const float PaddleWidth = 2f;
+    const float PaddleHeight = 0.4f;
+    const float PaddleDepth = 0.5f;
+    const float PaddleCornerRadius = 0.15f;
+    const int PaddleCornerSegments = 8;
     const string SquareTexturePath = SpritesFolder + "/Square.png";
     const string CircleTexturePath = SpritesFolder + "/Circle.png";
     // Pre-variant crack textures, removed by the stage-28 retrofit.
@@ -418,6 +427,51 @@ public static class ArkanoidSetup
             AssetDatabase.DeleteAsset(LegacyCrackLightTexturePath);
             AssetDatabase.DeleteAsset(LegacyCrackHeavyTexturePath);
             Debug.Log("[ArkanoidSetup] Stage 28: wired the crack variants into the brick prefab.");
+            return;
+        }
+
+        // Stage 29: rounded-corner paddle mesh, authored at final size like
+        // the wall meshes.
+        if (!File.Exists(ToAbsolute(PaddleMeshPath)))
+        {
+            Directory.CreateDirectory(ToAbsolute(MeshesFolder));
+            AssetDatabase.CreateAsset(
+                BuildPaddleMesh(PaddleWidth, PaddleHeight, PaddleDepth, PaddleCornerRadius, PaddleCornerSegments),
+                PaddleMeshPath);
+            Debug.Log("[ArkanoidSetup] Stage 29: created the rounded paddle mesh.");
+            return;
+        }
+
+        // Stage 30: swap the paddle onto the rounded mesh and round its
+        // collider to match, so the ball's bounce reflects off the corner
+        // curve's true normal. The mesh is authored at final size, so the
+        // transform drops to unit scale and the collider is sized explicitly,
+        // like the walls in stage 26.
+        var paddleGo = GameObject.Find("Paddle");
+        var paddleFilter = paddleGo != null ? paddleGo.GetComponent<MeshFilter>() : null;
+        if (paddleFilter != null && paddleFilter.sharedMesh != null && paddleFilter.sharedMesh.name == "Cube")
+        {
+            var paddleMesh = AssetDatabase.LoadAssetAtPath<Mesh>(PaddleMeshPath);
+            if (paddleMesh == null) return;
+            paddleFilter.sharedMesh = paddleMesh;
+            paddleGo.transform.localScale = Vector3.one;
+            var paddleCollider = paddleGo.GetComponent<BoxCollider2D>();
+            paddleCollider.size = new Vector2(
+                PaddleWidth - 2f * PaddleCornerRadius, PaddleHeight - 2f * PaddleCornerRadius);
+            paddleCollider.edgeRadius = PaddleCornerRadius;
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 30: rounded the paddle's corners (scene left dirty).");
+            return;
+        }
+
+        // Stage 31: persist stage 30, with the same tick-deferred save as
+        // stages 8 and 10, gated on the scene file not yet referencing the
+        // paddle mesh asset.
+        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains(AssetDatabase.AssetPathToGUID(PaddleMeshPath)))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 31: queued scene save for the next editor tick.");
+            return;
         }
     }
 
@@ -737,6 +791,85 @@ public static class ArkanoidSetup
         Face(new Vector3(-hw, -hh, hd), new Vector3(hw, -hh, hd), new Vector3(hw, -hh, -hd), new Vector3(-hw, -hh, -hd), width, depth);   // bottom (-Y)
         Face(new Vector3(hw, -hh, -hd), new Vector3(hw, -hh, hd), new Vector3(hw, hh, hd), new Vector3(hw, hh, -hd), depth, height);      // right (+X)
         Face(new Vector3(-hw, -hh, hd), new Vector3(-hw, -hh, -hd), new Vector3(-hw, hh, -hd), new Vector3(-hw, hh, hd), depth, height);  // left (-X)
+
+        mesh.SetVertices(vertices);
+        mesh.SetUVs(0, uvs);
+        mesh.SetTriangles(triangles, 0);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    // A rounded-rectangle prism for the paddle, authored at final size like
+    // the wall meshes: the XY outline is a rectangle with quarter-circle
+    // corners, extruded along Z into front and back faces plus an outward rim.
+    // The paddle material is a plain color, so the UVs just map local XY on
+    // the faces and outline length by depth on the rim.
+    static Mesh BuildPaddleMesh(float width, float height, float depth, float cornerRadius, int cornerSegments)
+    {
+        float hd = depth / 2f;
+        var mesh = new Mesh { name = "Paddle" };
+        var vertices = new List<Vector3>();
+        var uvs = new List<Vector2>();
+        var triangles = new List<int>();
+
+        // Counterclockwise outline: quarter-circle arcs around the four inset
+        // corner centers; the straight edges emerge between consecutive arcs.
+        var centers = new[]
+        {
+            new Vector2(width / 2f - cornerRadius, height / 2f - cornerRadius),
+            new Vector2(cornerRadius - width / 2f, height / 2f - cornerRadius),
+            new Vector2(cornerRadius - width / 2f, cornerRadius - height / 2f),
+            new Vector2(width / 2f - cornerRadius, cornerRadius - height / 2f),
+        };
+        var outline = new List<Vector2>();
+        for (int c = 0; c < 4; c++)
+        {
+            for (int i = 0; i <= cornerSegments; i++)
+            {
+                float angle = Mathf.PI / 2f * (c + (float)i / cornerSegments);
+                outline.Add(centers[c] + cornerRadius * new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)));
+            }
+        }
+
+        // Front (-Z) and back (+Z) faces: fans from the center of the outline.
+        foreach (var (z, front) in new[] { (-hd, true), (hd, false) })
+        {
+            int start = vertices.Count;
+            vertices.Add(new Vector3(0f, 0f, z));
+            uvs.Add(Vector2.zero);
+            foreach (var point in outline)
+            {
+                vertices.Add(new Vector3(point.x, point.y, z));
+                uvs.Add(point);
+            }
+            for (int i = 0; i < outline.Count; i++)
+            {
+                int a = start + 1 + i, b = start + 1 + (i + 1) % outline.Count;
+                triangles.Add(start);
+                triangles.Add(front ? b : a);
+                triangles.Add(front ? a : b);
+            }
+        }
+
+        // Rim: one outward-facing quad per outline segment.
+        float length = 0f;
+        for (int i = 0; i < outline.Count; i++)
+        {
+            var from = outline[i];
+            var to = outline[(i + 1) % outline.Count];
+            int start = vertices.Count;
+            vertices.Add(new Vector3(from.x, from.y, -hd));
+            vertices.Add(new Vector3(from.x, from.y, hd));
+            vertices.Add(new Vector3(to.x, to.y, hd));
+            vertices.Add(new Vector3(to.x, to.y, -hd));
+            float next = length + Vector2.Distance(from, to);
+            uvs.Add(new Vector2(length, 0f)); uvs.Add(new Vector2(length, depth));
+            uvs.Add(new Vector2(next, depth)); uvs.Add(new Vector2(next, 0f));
+            length = next;
+            triangles.Add(start); triangles.Add(start + 2); triangles.Add(start + 1);
+            triangles.Add(start); triangles.Add(start + 3); triangles.Add(start + 2);
+        }
 
         mesh.SetVertices(vertices);
         mesh.SetUVs(0, uvs);

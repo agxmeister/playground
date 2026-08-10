@@ -66,6 +66,11 @@ public class Ball : MonoBehaviour
         var paddle = collision.collider.GetComponent<Paddle>();
         if (paddle == null) return;
 
+        // Only hits on the paddle's flat top get the arcade angle override.
+        // On the rounded corners the contact normal tilts away from straight
+        // up, and the engine's reflection off the curve's normal stands.
+        if (collision.contactCount == 0 || collision.GetContact(0).normal.y < 0.995f) return;
+
         float offset = (transform.position.x - collision.transform.position.x)
             / collision.collider.bounds.extents.x;
         body.linearVelocity = new Vector2(offset, 1f).normalized * speed;
