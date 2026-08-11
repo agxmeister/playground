@@ -7,7 +7,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently thirty-one of them, ending with the rounded paddle corners)
+// (currently thirty-five of them, ending with the centered light)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -471,6 +471,55 @@ public static class ArkanoidSetup
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 31: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 32: center the directional light. The URP template authored
+        // it at (0, 3, 0); move it to the scene origin. Position doesn't
+        // affect a directional light's illumination (only rotation does), so
+        // this is purely about where its gizmo sits in the hierarchy/scene
+        // view. A from-scratch rebuild already creates the light at the
+        // origin, so this stage only fires on the template-authored scene.
+        var sceneLight = Object.FindAnyObjectByType<Light>(FindObjectsInactive.Include);
+        if (sceneLight != null && sceneLight.transform.position != Vector3.zero)
+        {
+            sceneLight.transform.position = Vector3.zero;
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 32: moved the light to the scene center (scene left dirty).");
+            return;
+        }
+
+        // Stage 33: persist stage 32, with the same tick-deferred save as the
+        // earlier save stages, gated on the scene file still holding the
+        // light's old template position.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("m_LocalPosition: {x: 0, y: 3, z: 0}"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 33: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 34: center the light *direction*. The template's -30° yaw
+        // lit the playfield from the top right, which is what actually shows
+        // up in the shadows (a directional light only has a direction). Drop
+        // the yaw so the light faces the playfield head-on horizontally,
+        // keeping the 50° downward tilt so the shadows — the main depth cue —
+        // stay visible below the objects instead of hiding behind them.
+        if (sceneLight != null && Mathf.Abs(sceneLight.transform.forward.x) > 0.001f)
+        {
+            sceneLight.transform.rotation = Quaternion.Euler(50f, 0f, 0f);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 34: centered the light's direction (scene left dirty).");
+            return;
+        }
+
+        // Stage 35: persist stage 34, with the same tick-deferred save as the
+        // earlier save stages, gated on the scene file still holding the old
+        // yawed rotation quaternion.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("m_LocalRotation: {x: 0.40821788"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 35: queued scene save for the next editor tick.");
             return;
         }
     }
@@ -950,7 +999,7 @@ public static class ArkanoidSetup
             var light = lightGo.AddComponent<Light>();
             light.type = LightType.Directional;
             light.shadows = LightShadows.Soft;
-            lightGo.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+            lightGo.transform.rotation = Quaternion.Euler(50f, 0f, 0f);
         }
 
         EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
