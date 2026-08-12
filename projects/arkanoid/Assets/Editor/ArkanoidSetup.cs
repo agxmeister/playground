@@ -7,7 +7,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently thirty-five of them, ending with the centered light)
+// (currently thirty-nine of them, ending with the brick shape variants)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -47,6 +47,19 @@ public static class ArkanoidSetup
     const string BouncyMaterialPath = PhysicsFolder + "/Bouncy.physicsMaterial2D";
     const string BallPrefabPath = PrefabsFolder + "/Ball.prefab";
     const string BrickPrefabPath = PrefabsFolder + "/Brick.prefab";
+    // Brick shape variants: each collider matches its visual outline exactly,
+    // so the ball's reflection off any brick uses the shape's true normal.
+    const string HalfBrickPrefabPath = PrefabsFolder + "/HalfBrick.prefab";
+    const string RoundedBrickPrefabPath = PrefabsFolder + "/RoundedBrick.prefab";
+    const string RoundBrickPrefabPath = PrefabsFolder + "/RoundBrick.prefab";
+    const string RoundedBrickMeshPath = MeshesFolder + "/BrickRounded.asset";
+    const float BrickWidth = 1.5f;
+    const float BrickHeight = 0.5f;
+    const float BrickDepth = 0.6f;
+    // Two half bricks plus the level's 0.14 gap fill one normal slot: 2 * 0.68 + 0.14 = 1.5.
+    const float HalfBrickWidth = 0.68f;
+    const float RoundedBrickCornerRadius = 0.12f;
+    const float RoundBrickDiameter = 0.5f;
 
     [InitializeOnLoadMethod]
     static void Setup()
@@ -436,7 +449,7 @@ public static class ArkanoidSetup
         {
             Directory.CreateDirectory(ToAbsolute(MeshesFolder));
             AssetDatabase.CreateAsset(
-                BuildPaddleMesh(PaddleWidth, PaddleHeight, PaddleDepth, PaddleCornerRadius, PaddleCornerSegments),
+                BuildRoundedPrismMesh("Paddle", PaddleWidth, PaddleHeight, PaddleDepth, PaddleCornerRadius, PaddleCornerSegments),
                 PaddleMeshPath);
             Debug.Log("[ArkanoidSetup] Stage 29: created the rounded paddle mesh.");
             return;
@@ -520,6 +533,75 @@ public static class ArkanoidSetup
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 35: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stages 36-39 add the brick shape variants: a half-width brick, a
+        // rounded-corner brick and a round brick. Each prefab's 2D collider
+        // matches its visual outline exactly, so the ball reflects off the
+        // shape's true contact normal (flat face, corner curve, or circle).
+
+        // Stage 36: rounded-corner brick mesh, the same rounded-rectangle
+        // prism as the paddle, authored at final size.
+        if (!File.Exists(ToAbsolute(RoundedBrickMeshPath)))
+        {
+            Directory.CreateDirectory(ToAbsolute(MeshesFolder));
+            AssetDatabase.CreateAsset(
+                BuildRoundedPrismMesh("BrickRounded", BrickWidth, BrickHeight, BrickDepth,
+                    RoundedBrickCornerRadius, PaddleCornerSegments),
+                RoundedBrickMeshPath);
+            Debug.Log("[ArkanoidSetup] Stage 36: created the rounded brick mesh.");
+            return;
+        }
+
+        // Stage 37: the three brick-variant prefabs.
+        if (!File.Exists(ToAbsolute(HalfBrickPrefabPath)) || !File.Exists(ToAbsolute(RoundedBrickPrefabPath))
+            || !File.Exists(ToAbsolute(RoundBrickPrefabPath)))
+        {
+            var brickMaterial = AssetDatabase.LoadAssetAtPath<Material>(BrickMaterialPath);
+            var roundedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(RoundedBrickMeshPath);
+            var lightCracks = LoadCrackSprites("Light");
+            var heavyCracks = LoadCrackSprites("Heavy");
+            if (brickMaterial == null || roundedMesh == null || lightCracks == null || heavyCracks == null)
+            {
+                Debug.Log("[ArkanoidSetup] Brick variant dependencies not loadable yet, waiting for next reload.");
+                return;
+            }
+            CreateHalfBrickPrefab(brickMaterial, lightCracks, heavyCracks);
+            CreateRoundedBrickPrefab(brickMaterial, roundedMesh, lightCracks, heavyCracks);
+            CreateRoundBrickPrefab(brickMaterial, lightCracks, heavyCracks);
+            Debug.Log("[ArkanoidSetup] Stage 37: created the brick variant prefabs.");
+            return;
+        }
+
+        // Stage 38: wire the variant prefabs into the GameManager.
+        var gameManager = Object.FindAnyObjectByType<GameManager>();
+        if (gameManager != null)
+        {
+            var managerSo = new SerializedObject(gameManager);
+            if (managerSo.FindProperty("halfBrickPrefab").objectReferenceValue == null)
+            {
+                var halfBrick = AssetDatabase.LoadAssetAtPath<GameObject>(HalfBrickPrefabPath);
+                var roundedBrick = AssetDatabase.LoadAssetAtPath<GameObject>(RoundedBrickPrefabPath);
+                var roundBrick = AssetDatabase.LoadAssetAtPath<GameObject>(RoundBrickPrefabPath);
+                if (halfBrick == null || roundedBrick == null || roundBrick == null) return;
+                managerSo.FindProperty("halfBrickPrefab").objectReferenceValue = halfBrick.GetComponent<Brick>();
+                managerSo.FindProperty("roundedBrickPrefab").objectReferenceValue = roundedBrick.GetComponent<Brick>();
+                managerSo.FindProperty("roundBrickPrefab").objectReferenceValue = roundBrick.GetComponent<Brick>();
+                managerSo.ApplyModifiedPropertiesWithoutUndo();
+                EditorSceneManager.MarkSceneDirty(scene);
+                Debug.Log("[ArkanoidSetup] Stage 38: wired the brick variants into the GameManager (scene left dirty).");
+                return;
+            }
+        }
+
+        // Stage 39: persist stage 38, with the same tick-deferred save as the
+        // earlier save stages, gated on the scene file not yet referencing the
+        // half-brick prefab asset.
+        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains(AssetDatabase.AssetPathToGUID(HalfBrickPrefabPath)))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 39: queued scene save for the next editor tick.");
             return;
         }
     }
@@ -716,6 +798,81 @@ public static class ArkanoidSetup
         Object.DestroyImmediate(go);
     }
 
+    // Half-width brick: a scaled stock cube like the normal brick (the plain
+    // color material makes the cube's UV squeeze irrelevant). The default
+    // 1x1 BoxCollider2D inherits the transform scale, so flat-face impacts
+    // reflect exactly like the normal brick's.
+    static void CreateHalfBrickPrefab(Material material, Sprite[] lightCracks, Sprite[] heavyCracks)
+    {
+        var go = new GameObject("HalfBrick");
+        go.transform.localScale = new Vector3(HalfBrickWidth, BrickHeight, BrickDepth);
+        go.AddComponent<MeshFilter>().sharedMesh = Resources.GetBuiltinResource<Mesh>("Cube.fbx");
+        go.AddComponent<MeshRenderer>().sharedMaterial = material;
+        go.AddComponent<BoxCollider2D>();
+        go.AddComponent<Brick>();
+        // The child inherits the root scale, so the 1-unit crack sprite covers
+        // the brick; -0.51 lands just in front of the box face at z -0.5.
+        AddCrackOverlay(go, new Vector3(0f, 0f, -0.51f), Vector3.one, lightCracks, heavyCracks);
+        PrefabUtility.SaveAsPrefabAsset(go, HalfBrickPrefabPath);
+        Object.DestroyImmediate(go);
+    }
+
+    // Rounded-corner brick: the mesh is authored at final size (unit-scale
+    // transform, like the paddle), and the collider is a box shrunk by the
+    // corner radius on every side with edgeRadius filling it back out — the
+    // same rounded rectangle, so corner hits reflect off the curve's normal.
+    static void CreateRoundedBrickPrefab(Material material, Mesh roundedMesh, Sprite[] lightCracks, Sprite[] heavyCracks)
+    {
+        var go = new GameObject("RoundedBrick");
+        go.AddComponent<MeshFilter>().sharedMesh = roundedMesh;
+        go.AddComponent<MeshRenderer>().sharedMaterial = material;
+        var collider = go.AddComponent<BoxCollider2D>();
+        collider.size = new Vector2(
+            BrickWidth - 2f * RoundedBrickCornerRadius, BrickHeight - 2f * RoundedBrickCornerRadius);
+        collider.edgeRadius = RoundedBrickCornerRadius;
+        go.AddComponent<Brick>();
+        AddCrackOverlay(go, new Vector3(0f, 0f, -BrickDepth / 2f - 0.01f),
+            new Vector3(BrickWidth, BrickHeight, 1f), lightCracks, heavyCracks);
+        PrefabUtility.SaveAsPrefabAsset(go, RoundedBrickPrefabPath);
+        Object.DestroyImmediate(go);
+    }
+
+    // Round brick: a half-size sphere whose CircleCollider2D matches its
+    // silhouette exactly, so the ball reflects off the circle's radial
+    // normal — glancing hits deflect sideways instead of bouncing flat.
+    static void CreateRoundBrickPrefab(Material material, Sprite[] lightCracks, Sprite[] heavyCracks)
+    {
+        var go = new GameObject("RoundBrick");
+        go.transform.localScale = Vector3.one * RoundBrickDiameter;
+        go.AddComponent<MeshFilter>().sharedMesh = Resources.GetBuiltinResource<Mesh>("New-Sphere.fbx");
+        go.AddComponent<MeshRenderer>().sharedMaterial = material;
+        go.AddComponent<CircleCollider2D>().radius = 0.5f;
+        go.AddComponent<Brick>();
+        // 0.7 ~ an inscribed square: keeps the square crack sprite's pixels
+        // over the sphere's circular silhouette instead of floating past it.
+        AddCrackOverlay(go, new Vector3(0f, 0f, -0.52f), Vector3.one * 0.7f, lightCracks, heavyCracks);
+        PrefabUtility.SaveAsPrefabAsset(go, RoundBrickPrefabPath);
+        Object.DestroyImmediate(go);
+    }
+
+    // Adds the Cracks overlay child and wires it (and the sprite variant
+    // arrays) into the Brick component on a prefab under construction.
+    static void AddCrackOverlay(GameObject root, Vector3 localPosition, Vector3 localScale,
+        Sprite[] lightCracks, Sprite[] heavyCracks)
+    {
+        var cracksGo = new GameObject("Cracks");
+        cracksGo.transform.SetParent(root.transform, false);
+        cracksGo.transform.localPosition = localPosition;
+        cracksGo.transform.localScale = localScale;
+        var renderer = cracksGo.AddComponent<SpriteRenderer>();
+        renderer.sortingOrder = 1;
+
+        var so = new SerializedObject(root.GetComponent<Brick>());
+        so.FindProperty("crackRenderer").objectReferenceValue = renderer;
+        SetCrackSpriteArrays(so, lightCracks, heavyCracks);
+        so.ApplyModifiedPropertiesWithoutUndo();
+    }
+
     // All sprites of one weight ("Light"/"Heavy"), or null while any variant
     // is still unimportable.
     static Sprite[] LoadCrackSprites(string weight)
@@ -849,15 +1006,15 @@ public static class ArkanoidSetup
         return mesh;
     }
 
-    // A rounded-rectangle prism for the paddle, authored at final size like
-    // the wall meshes: the XY outline is a rectangle with quarter-circle
-    // corners, extruded along Z into front and back faces plus an outward rim.
-    // The paddle material is a plain color, so the UVs just map local XY on
-    // the faces and outline length by depth on the rim.
-    static Mesh BuildPaddleMesh(float width, float height, float depth, float cornerRadius, int cornerSegments)
+    // A rounded-rectangle prism (paddle, rounded brick), authored at final
+    // size like the wall meshes: the XY outline is a rectangle with
+    // quarter-circle corners, extruded along Z into front and back faces plus
+    // an outward rim. The materials are plain colors, so the UVs just map
+    // local XY on the faces and outline length by depth on the rim.
+    static Mesh BuildRoundedPrismMesh(string name, float width, float height, float depth, float cornerRadius, int cornerSegments)
     {
         float hd = depth / 2f;
-        var mesh = new Mesh { name = "Paddle" };
+        var mesh = new Mesh { name = name };
         var vertices = new List<Vector3>();
         var uvs = new List<Vector2>();
         var triangles = new List<int>();

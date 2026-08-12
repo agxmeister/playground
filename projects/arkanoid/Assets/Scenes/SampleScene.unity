@@ -1381,6 +1381,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::GameManager
   ballPrefab: {fileID: 6495988645356787210, guid: 051e0d0cb467142baaf1d3d24d6b22ee, type: 3}
   brickPrefab: {fileID: 3028317599255669738, guid: a1fe5a0c15b0349a8a7162e37646a90a, type: 3}
+  halfBrickPrefab: {fileID: 3031071559479064608, guid: eb6cdfa6a1f644902b4a7781dfd46d2a, type: 3}
+  roundedBrickPrefab: {fileID: 338946938124375262, guid: ca5a65d1f4971460d9433c11e2795f08, type: 3}
+  roundBrickPrefab: {fileID: 1620502014132224024, guid: 273cd1b9aa2da48419d4c4474dd05281, type: 3}
   paddle: {fileID: 887666782}
   scoreBoard: {fileID: 685092864}
   recordsPanel: {fileID: 1310166190}

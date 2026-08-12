@@ -9,6 +9,9 @@ public class GameManager : MonoBehaviour
 
     [SerializeField] Ball ballPrefab;
     [SerializeField] Brick brickPrefab;
+    [SerializeField] Brick halfBrickPrefab;
+    [SerializeField] Brick roundedBrickPrefab;
+    [SerializeField] Brick roundBrickPrefab;
     [SerializeField] Paddle paddle;
     [SerializeField] ScoreBoard scoreBoard;
     [SerializeField] RecordsPanel recordsPanel;
@@ -29,6 +32,15 @@ public class GameManager : MonoBehaviour
 
     // Hardness per row, matching rowColors: red bricks take 3 hits, blue take 1.
     static readonly int[] rowHardness = { 3, 2, 2, 1, 1 };
+
+    // The brick shape used by each row. Half and Round bricks are half a slot
+    // wide, so those rows get two bricks per slot at half the points each.
+    enum BrickKind { Normal, Half, Rounded, Round }
+
+    static readonly BrickKind[] rowKinds =
+    {
+        BrickKind.Rounded, BrickKind.Normal, BrickKind.Half, BrickKind.Round, BrickKind.Normal,
+    };
 
     enum State { Menu, Ready, Playing, EnteringName, GameOver, Won }
 
@@ -102,22 +114,52 @@ public class GameManager : MonoBehaviour
         bricksLeft = 0;
 
         const float width = 1.5f, height = 0.5f, gap = 0.14f;
+        // Two half-width bricks plus the same gap fill one slot exactly:
+        // 2 * 0.68 + 0.14 = 1.5, with their centers at slot center ± 0.41.
+        const float halfOffset = (width + gap) / 4f;
         float x0 = -(columns - 1) * (width + gap) / 2f;
         const float y0 = 4.6f;
 
         for (int row = 0; row < rows; row++)
         {
+            var kind = rowKinds[row % rowKinds.Length];
+            int points = (rows - row) * 100;
+            int hardness = rowHardness[row % rowHardness.Length];
+            var color = rowColors[row % rowColors.Length];
+
             for (int column = 0; column < columns; column++)
             {
-                var position = new Vector3(x0 + column * (width + gap), y0 - row * (height + gap), 0f);
-                var brick = Instantiate(brickPrefab, position, Quaternion.identity, brickHolder);
-                brick.Points = (rows - row) * 100;
-                brick.Hardness = rowHardness[row % rowHardness.Length];
-                brick.SetColor(rowColors[row % rowColors.Length]);
-                bricksLeft++;
+                var slot = new Vector3(x0 + column * (width + gap), y0 - row * (height + gap), 0f);
+                if (kind == BrickKind.Half || kind == BrickKind.Round)
+                {
+                    SpawnBrick(kind, slot + Vector3.left * halfOffset, points / 2, hardness, color);
+                    SpawnBrick(kind, slot + Vector3.right * halfOffset, points / 2, hardness, color);
+                }
+                else
+                {
+                    SpawnBrick(kind, slot, points, hardness, color);
+                }
             }
         }
     }
+
+    void SpawnBrick(BrickKind kind, Vector3 position, int points, int hardness, Color color)
+    {
+        var brick = Instantiate(PrefabFor(kind), position, Quaternion.identity, brickHolder);
+        brick.Points = points;
+        brick.Hardness = hardness;
+        brick.SetColor(color);
+        bricksLeft++;
+    }
+
+    // Falls back to the normal brick while a variant prefab is not wired up.
+    Brick PrefabFor(BrickKind kind) => kind switch
+    {
+        BrickKind.Half when halfBrickPrefab != null => halfBrickPrefab,
+        BrickKind.Rounded when roundedBrickPrefab != null => roundedBrickPrefab,
+        BrickKind.Round when roundBrickPrefab != null => roundBrickPrefab,
+        _ => brickPrefab,
+    };
 
     void SpawnBall()
     {
