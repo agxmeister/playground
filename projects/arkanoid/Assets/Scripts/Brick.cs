@@ -13,11 +13,13 @@ public class Brick : MonoBehaviour
 
     int damage;
     int crackVariant = -1;
+    Color color = Color.white;
 
     // Tints the brick body per instance without duplicating the shared
     // URP Lit material ("_BaseColor" is its tint property).
     public void SetColor(Color color)
     {
+        this.color = color;
         colorBlock ??= new MaterialPropertyBlock();
         colorBlock.SetColor("_BaseColor", color);
         GetComponent<MeshRenderer>().SetPropertyBlock(colorBlock);
@@ -36,6 +38,8 @@ public class Brick : MonoBehaviour
         damage += amount;
         if (damage >= Hardness)
         {
+            var renderer = GetComponent<MeshRenderer>();
+            Debris.Spawn(transform.position, renderer.bounds.size, color, renderer.sharedMaterial);
             if (GameManager.Instance != null) GameManager.Instance.OnBrickDestroyed(this);
             Destroy(gameObject);
             return;
