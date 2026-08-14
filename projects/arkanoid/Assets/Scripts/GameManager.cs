@@ -57,6 +57,7 @@ public class GameManager : MonoBehaviour
     int bricksLeft;
     string typedName = "";
     bool menuShowingRecords;
+    int transitionFrame = -1;
 
     void Awake()
     {
@@ -66,20 +67,44 @@ public class GameManager : MonoBehaviour
 
     void Start()
     {
+        if (mainMenuPanel != null) mainMenuPanel.OptionChosen += OnMenuOptionChosen;
         ShowMenu();
     }
 
     void ShowMenu()
     {
+        transitionFrame = Time.frameCount;
         menuShowingRecords = false;
+        // The menu screen carries its own high score line; the score and lives
+        // readouts belong to a round in progress.
+        if (scoreBoard != null) scoreBoard.SetVisible(false);
         if (recordsPanel != null) recordsPanel.Hide();
         if (mainMenuPanel != null) mainMenuPanel.Show(highScore);
         state = State.Menu;
     }
 
+    void OnMenuOptionChosen(MainMenuOption option)
+    {
+        if (state != State.Menu || menuShowingRecords) return;
+
+        if (option == MainMenuOption.StartGame)
+        {
+            NewGame();
+            return;
+        }
+
+        transitionFrame = Time.frameCount;
+        menuShowingRecords = true;
+        // Only the options go away — the 3D menu screen stays up behind the
+        // records panel.
+        if (mainMenuPanel != null) mainMenuPanel.HideOptions();
+        if (recordsPanel != null) recordsPanel.ShowRecords(RecordBook.Load(), "ESC — back to menu");
+    }
+
     void NewGame()
     {
         previousRecord = highScore;
+        if (scoreBoard != null) scoreBoard.SetVisible(true);
         if (recordsPanel != null) recordsPanel.Hide();
         if (mainMenuPanel != null) mainMenuPanel.Hide();
         SetScore(0);
@@ -96,9 +121,7 @@ public class GameManager : MonoBehaviour
             highScore = score;
             PlayerPrefs.SetInt(HighScoreKey, highScore);
         }
-        if (scoreBoard == null) return;
-        scoreBoard.SetScore(score);
-        scoreBoard.SetHighScore(highScore);
+        if (scoreBoard != null) scoreBoard.SetScore(score);
     }
 
     void SetLives(int value)
@@ -163,6 +186,7 @@ public class GameManager : MonoBehaviour
 
     void SpawnBall()
     {
+        transitionFrame = Time.frameCount;
         if (ball == null) ball = Instantiate(ballPrefab);
         ball.AttachTo(paddle.transform);
         state = State.Ready;
@@ -170,28 +194,25 @@ public class GameManager : MonoBehaviour
 
     void Update()
     {
+        // The key press that caused this frame's transition must not act twice:
+        // MainMenuPanel reads the keyboard in the same frame as this component,
+        // in an undefined order, so ENTER on START would otherwise both start
+        // the game and launch the ball.
+        if (Time.frameCount == transitionFrame) return;
+
         var keyboard = Keyboard.current;
         bool pressedSpace = keyboard != null && keyboard.spaceKey.wasPressedThisFrame;
 
         switch (state)
         {
             case State.Menu:
+                // The menu's own options are driven by MainMenuPanel; only the
+                // way back from its hall of fame view is handled here.
                 if (menuShowingRecords)
                 {
-                    bool pressedBack = keyboard != null
-                        && (keyboard.escapeKey.wasPressedThisFrame || keyboard.rKey.wasPressedThisFrame);
+                    bool pressedBack = pressedSpace || (keyboard != null
+                        && (keyboard.escapeKey.wasPressedThisFrame || keyboard.enterKey.wasPressedThisFrame));
                     if (pressedBack) ShowMenu();
-                    break;
-                }
-                if (pressedSpace)
-                {
-                    NewGame();
-                }
-                else if (keyboard != null && keyboard.rKey.wasPressedThisFrame)
-                {
-                    menuShowingRecords = true;
-                    if (mainMenuPanel != null) mainMenuPanel.Hide();
-                    if (recordsPanel != null) recordsPanel.ShowRecords(RecordBook.Load(), "ESC — back to menu");
                 }
                 break;
             case State.Ready:
@@ -261,6 +282,7 @@ public class GameManager : MonoBehaviour
 
     void ShowEndScreen()
     {
+        transitionFrame = Time.frameCount;
         state = endState;
         string message = endState == State.Won
             ? $"YOU WIN! Score: {score} — press SPACE for the menu"
@@ -293,6 +315,7 @@ public class GameManager : MonoBehaviour
     void OnDestroy()
     {
         if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
+        if (mainMenuPanel != null) mainMenuPanel.OptionChosen -= OnMenuOptionChosen;
     }
 
     void OnGUI()
