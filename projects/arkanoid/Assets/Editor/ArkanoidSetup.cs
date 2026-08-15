@@ -132,8 +132,13 @@ public static class ArkanoidSetup
     static readonly string[] MenuBackLabel = { "MENU" };
     // The paddle simply starts under the middle, between the two arrows.
     const float MenuPaddleRestX = 0f;
+    // How wide the menu room's backdrop is. It has to fill that room's frame —
+    // ~19 units across at 21:9 — and to stop short of the playfield, whose own
+    // backdrop is 17 wide and so reaches out to x -8.5: with the menu room a
+    // screen's width (20) to the left, half of 23 puts the two edge to edge.
+    const float MenuBackdropWidth = 23f;
     // The hall of fame's two lines and the arrows that drive them, a screen's
-    // width to the right of the title board inside the slider.
+    // width to the left of the title board inside the slider.
     const float HallNameY = 2.6f;
     const float HallScoreY = 1.1f;
     const float HallArrowY = 1.85f;
@@ -865,6 +870,61 @@ public static class ArkanoidSetup
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 51: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 52: move the hall of fame to the other side of the title board.
+        // It was authored to its right, which had the left-pointing arrow that
+        // leads to it scrolling the view right and the right-pointing one on it
+        // scrolling back left — every arrow travelling against its own point.
+        // From its left, each arrow scrolls the way it points. Nothing else of
+        // the screen changes, so this moves the one object rather than going
+        // through stage 50's wholesale rebuild.
+        var builtHall = FindRootObject("MenuScreen") != null
+            ? FindRootObject("MenuScreen").transform.Find("MenuSlider/MenuHall")
+            : null;
+        if (builtHall != null && builtHall.localPosition.x > 0f)
+        {
+            builtHall.localPosition = new Vector3(-MainMenuPanel.ScreenSpacing, 0f, 0f);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 52: moved the hall of fame left of the board (scene left dirty).");
+            return;
+        }
+
+        // Stage 53: persist stage 52, gated on the scene file still holding the
+        // hall where it used to stand.
+        if (File.ReadAllText(ToAbsolute(scene.path))
+            .Contains($"m_LocalPosition: {{x: {MainMenuPanel.ScreenSpacing}, y: 0, z: 0}}"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 53: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 54: move the whole menu into a room of its own, a screen's
+        // width left of the playfield, and pull its backdrop in to the width
+        // that room needs. It used to stand on top of the playfield with a
+        // backdrop wide enough to hide it, which left nothing for START to
+        // travel across — the menu could only be switched off. Apart in X, the
+        // view can scroll from one to the other.
+        var menuRoom = FindRootObject("MenuScreen");
+        if (menuRoom != null && menuRoom.transform.position.x > -MainMenuPanel.ScreenSpacing + 1f)
+        {
+            menuRoom.transform.position = new Vector3(-MainMenuPanel.ScreenSpacing, 0f, 0f);
+            var roomBackdrop = menuRoom.transform.Find("MenuBackdrop");
+            if (roomBackdrop != null)
+                roomBackdrop.localScale = new Vector3(MenuBackdropWidth, 24f, 0.4f);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 54: moved the menu into its own room (scene left dirty).");
+            return;
+        }
+
+        // Stage 55: persist stage 54, gated on the scene file still holding the
+        // backdrop at the width it had while it was hiding the playfield.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("m_LocalScale: {x: 40, y: 24, z: 0.4}"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 55: queued scene save for the next editor tick.");
             return;
         }
     }
@@ -1658,14 +1718,19 @@ public static class ArkanoidSetup
         var ballPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BallPrefabPath);
 
         var root = new GameObject("MenuScreen");
+        // The menu is a room of its own, a screen's width to the left of the
+        // playfield, so that starting a round is the view travelling right to
+        // the playfield rather than the menu being switched off in front of it.
+        root.transform.position = new Vector3(-MainMenuPanel.ScreenSpacing, 0f, 0f);
         var menu = root.AddComponent<MainMenuPanel>();
 
-        // Deliberately oversized: at z -3 the camera's frame is ~10 units tall,
-        // and this stays covered on any aspect ratio.
+        // Covers this room's frame at any sane aspect ratio (at z -3 that frame
+        // is ~10 units tall) and stops where the playfield's own backdrop
+        // begins, so it hides nothing of the room the view travels to.
         var backdrop = new GameObject("MenuBackdrop");
         backdrop.transform.SetParent(root.transform, false);
         backdrop.transform.localPosition = new Vector3(0f, 0f, -3f);
-        backdrop.transform.localScale = new Vector3(40f, 24f, 0.4f);
+        backdrop.transform.localScale = new Vector3(MenuBackdropWidth, 24f, 0.4f);
         backdrop.AddComponent<MeshFilter>().sharedMesh = Resources.GetBuiltinResource<Mesh>("Cube.fbx");
         var backdropRenderer = backdrop.AddComponent<MeshRenderer>();
         backdropRenderer.sharedMaterial = backdropMaterial;
@@ -1801,11 +1866,15 @@ public static class ArkanoidSetup
     // arrow to the next champion on the left and the way back to the menu on
     // the right. Both lines are empty here — the names are only known at
     // runtime, so HallOfFame builds their meshes itself.
+    //
+    // It sits a screen's width to the *left* of the board, so that the
+    // left-pointing arrow that leads here scrolls left to reach it and the
+    // right-pointing one on it scrolls right to go back.
     static void BuildHallOfFame(Transform slider, Material nameMaterial, Material scoreMaterial)
     {
         var hall = new GameObject("MenuHall");
         hall.transform.SetParent(slider, false);
-        hall.transform.localPosition = new Vector3(MainMenuPanel.ScreenSpacing, 0f, 0f);
+        hall.transform.localPosition = new Vector3(-MainMenuPanel.ScreenSpacing, 0f, 0f);
         var component = hall.AddComponent<HallOfFame>();
 
         var nameLine = CreateChampionLine(hall.transform, "ChampionName", HallNameY, nameMaterial);

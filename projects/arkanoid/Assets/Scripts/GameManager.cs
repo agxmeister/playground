@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -55,8 +56,18 @@ public class GameManager : MonoBehaviour
 
     const int MaxNameLength = 12;
 
+    // How long the view takes to travel from the menu's room to the playfield.
+    // The same length as the menu's own slide between its two screens, so
+    // starting a round reads as one more step to the right rather than as a
+    // different kind of change.
+    const float TravelDuration = 0.6f;
+
     State state;
     State endState;
+    // True while the view is travelling from the menu to the playfield. The
+    // round is already built and waiting behind it, so everything that reads
+    // the keyboard has to hold off until the journey is over.
+    bool traveling;
     Ball ball;
     Transform brickHolder;
     int score;
@@ -92,6 +103,11 @@ public class GameManager : MonoBehaviour
         if (scoreBoard != null) scoreBoard.SetVisible(false);
         SetPlayfieldActive(false);
         if (recordsPanel != null) recordsPanel.Hide();
+        // The menu is a room of its own, off to the left of the playfield, so
+        // the view has to be over it before it is switched on. Coming back is a
+        // cut rather than a journey: the menu's opaque backdrop comes up in the
+        // same frame, and there is nothing to see travelling over.
+        MoveViewTo(MenuViewX);
         if (mainMenuPanel != null) mainMenuPanel.Show();
         state = State.Menu;
     }
@@ -121,17 +137,58 @@ public class GameManager : MonoBehaviour
         NewGame();
     }
 
+    // The round is built first and the view travels to it afterwards, because
+    // the point of the journey is arriving at something: the walls, the bricks
+    // and the paddle are all standing in the playfield's room before the menu
+    // starts sliding out of the frame.
     void NewGame()
     {
         previousRecord = highScore;
         SetPlayfieldActive(true);
-        if (scoreBoard != null) scoreBoard.SetVisible(true);
         if (recordsPanel != null) recordsPanel.Hide();
-        if (mainMenuPanel != null) mainMenuPanel.Hide();
         SetScore(0);
         SetLives(startingLives);
         BuildLevel();
         SpawnBall();
+        StartCoroutine(TravelToPlayfield());
+    }
+
+    // START is the right-pointing arrow, so it goes right: the view leaves the
+    // menu's room for the playfield's rather than cutting to it. The menu is
+    // only switched off once the view is over the playfield — and in the same
+    // frame, so its backdrop is never seen sitting on the round's screen.
+    IEnumerator TravelToPlayfield()
+    {
+        traveling = true;
+        float from = MenuViewX;
+        for (float t = 0f; t < TravelDuration; t += Time.deltaTime)
+        {
+            MoveViewTo(Mathf.SmoothStep(from, PlayfieldViewX, t / TravelDuration));
+            yield return null;
+        }
+        MoveViewTo(PlayfieldViewX);
+        if (mainMenuPanel != null) mainMenuPanel.Hide();
+        // The HUD belongs to the round, so it comes up on arrival rather than
+        // hanging over the menu all the way across.
+        if (scoreBoard != null) scoreBoard.SetVisible(true);
+        traveling = false;
+        // The SPACE that could not launch the ball on the way must not launch
+        // it on the frame the journey ends either.
+        transitionFrame = Time.frameCount;
+    }
+
+    // The playfield is the world's middle; the menu is wherever its screen was
+    // authored, a screen's width to the left of it.
+    const float PlayfieldViewX = 0f;
+
+    float MenuViewX => mainMenuPanel != null ? mainMenuPanel.transform.position.x : PlayfieldViewX;
+
+    static void MoveViewTo(float x)
+    {
+        var view = Camera.main;
+        if (view == null) return;
+        var position = view.transform.position;
+        view.transform.position = new Vector3(x, position.y, position.z);
     }
 
     void SetPlayfieldActive(bool active)
@@ -227,6 +284,9 @@ public class GameManager : MonoBehaviour
         // in an undefined order, so ENTER on START would otherwise both start
         // the game and launch the ball.
         if (Time.frameCount == transitionFrame) return;
+        // The round is built and waiting, but the view is still on its way to
+        // it: no key means anything until it arrives.
+        if (traveling) return;
 
         var keyboard = Keyboard.current;
         bool pressedSpace = keyboard != null && keyboard.spaceKey.wasPressedThisFrame;
@@ -410,8 +470,11 @@ public class GameManager : MonoBehaviour
         // The same prompt serves the round and the menu: both sit a ball on a
         // paddle and wait for SPACE, and on the menu it is the one thing that
         // isn't self-evident about aiming at an option.
-        bool waiting = state == State.Ready
-            || (state == State.Menu && mainMenuPanel != null && mainMenuPanel.BallWaiting);
+        // Not while the view is still travelling to the round, though: the ball
+        // is sitting on the paddle already, but SPACE does nothing yet.
+        bool waiting = !traveling
+            && (state == State.Ready
+                || (state == State.Menu && mainMenuPanel != null && mainMenuPanel.BallWaiting));
         if (!waiting) return;
 
         var banner = new GUIStyle(GUI.skin.label)

@@ -16,8 +16,8 @@ public enum MainMenuOption { StartGame, HallOfFame, NextChampion, BackToMenu }
 // launch straight up picks nothing.
 //
 // The menu is two screens side by side inside MenuSlider — the title board and
-// the hall of fame a screen's width to its right — and choosing the hall of
-// fame slides the board off to the left rather than cutting to another view.
+// the hall of fame a screen's width to its left — and choosing the hall of
+// fame slides the board off to the right rather than cutting to another view.
 // The paddle and ball are outside the slider, so they stay put while the world
 // behind them moves.
 //
@@ -39,6 +39,10 @@ public class MainMenuPanel : MonoBehaviour
 
     // How far apart the two screens sit inside the slider — comfortably more
     // than the camera's frame is wide, so neither shows a corner of the other.
+    // The hall of fame sits this far to the *left* of the title board, because
+    // every arrow on the menu scrolls the way it points: the left-pointing HALL
+    // OF FAME arrow travels left to reach it, and the right-pointing one on the
+    // hall travels back right to the board.
     public const float ScreenSpacing = 20f;
 
     // GameManager draws the shared "press SPACE to launch" prompt for this.
@@ -179,7 +183,11 @@ public class MainMenuPanel : MonoBehaviour
                 yield return SlideTo(false);
                 break;
             case MainMenuOption.NextChampion:
-                if (hall != null) hall.Next();
+                // The champion doesn't change on the spot either: the plaque
+                // scrolls left, the same travel the arrow that was hit points
+                // along, and the champion being left behind slides out of the
+                // frame rather than blinking out of it.
+                if (hall != null) yield return hall.Advance();
                 break;
         }
 
@@ -199,7 +207,9 @@ public class MainMenuPanel : MonoBehaviour
         showingHall = toHall;
         if (slider == null) yield break;
         float from = slider.localPosition.x;
-        float to = toHall ? -ScreenSpacing : 0f;
+        // The hall is to the left, so reaching it carries the slider right —
+        // which is the view travelling left, the way its arrow points.
+        float to = toHall ? ScreenSpacing : 0f;
         for (float t = 0f; t < SlideDuration; t += Time.deltaTime)
         {
             slider.localPosition = new Vector3(

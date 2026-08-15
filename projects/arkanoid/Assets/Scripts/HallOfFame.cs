@@ -1,12 +1,13 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
 // The hall of fame screen: one champion at a time, spelled out in the same
-// block letters as the title. It sits a screen's width to the right of the
+// block letters as the title. It sits a screen's width to the left of the
 // menu inside MenuSlider, so picking "hall of fame" is a slide rather than a
 // cut, and it is driven the same way everything else on the menu is — by
 // hitting an arrow with the ball (left for the next champion, right for the
-// way back).
+// way back). Every arrow scrolls the way it points, the champions included.
 //
 // The names are whatever players typed into the name entry, so the two lines
 // are built at runtime rather than authored: block-font meshes made here and
@@ -36,6 +37,14 @@ public class HallOfFame : MonoBehaviour
     const float LineDepth = 0.35f;
     const float LineUvScale = 2f;
 
+    // The champion doesn't swap on the spot: the plaque scrolls, the next
+    // champion coming in from the left as the current one leaves to the right,
+    // the same travel the arrow that was hit points along. A screen's width of
+    // it, so the two never share the frame, and the same span the slide between
+    // the menu's two screens covers.
+    const float ScrollDistance = MainMenuPanel.ScreenSpacing;
+    const float ScrollDuration = 0.6f;
+
     readonly List<RecordEntry> champions = new List<RecordEntry>();
     // Every symbol currently standing on the plaque, kept so the next champion
     // can clear them: Destroy is deferred to the end of the frame, so counting
@@ -51,14 +60,55 @@ public class HallOfFame : MonoBehaviour
         entries.Sort((a, b) => b.score.CompareTo(a.score));
         for (int i = 0; i < entries.Count && i < MaxChampions; i++) champions.Add(entries[i]);
         index = 0;
-        Render();
+        MoveLines(0f);
+        ClearSymbols(symbols);
+        Render(0f);
     }
 
-    // Wraps: the tenth champion's next is the first again.
-    public void Next()
+    // The next champion, wrapping — the tenth's next is the first again —
+    // scrolled in rather than swapped in. The champion being left behind stays
+    // standing and travels out of the frame, so the change reads as movement
+    // along a row of champions rather than as one plaque becoming another.
+    public IEnumerator Advance()
     {
-        if (champions.Count > 0) index = (index + 1) % champions.Count;
-        Render();
+        // The arrow is hidden when there is nobody else to show, so this is
+        // only ever reached with somewhere to scroll to.
+        if (champions.Count < 2) yield break;
+
+        var outgoing = new List<GameObject>(symbols);
+        symbols.Clear();
+        index = (index + 1) % champions.Count;
+        // Built where it will come from, off to the left of the plaque.
+        Render(-ScrollDistance);
+
+        for (float t = 0f; t < ScrollDuration; t += Time.deltaTime)
+        {
+            MoveLines(Mathf.SmoothStep(0f, ScrollDistance, t / ScrollDuration));
+            yield return null;
+        }
+        MoveLines(ScrollDistance);
+
+        // The travel is over; what is left is putting the lines back where they
+        // were authored with the champion that has arrived standing on them, so
+        // the next scroll starts from the same place this one did.
+        ClearSymbols(outgoing);
+        MoveLines(0f);
+        foreach (var symbol in symbols)
+            if (symbol != null) symbol.transform.localPosition += new Vector3(ScrollDistance, 0f, 0f);
+    }
+
+    // Both lines travel together — they are one plaque, and only their X moves.
+    void MoveLines(float x)
+    {
+        MoveLine(nameLine, x);
+        MoveLine(scoreLine, x);
+    }
+
+    static void MoveLine(MeshFilter line, float x)
+    {
+        if (line == null) return;
+        var position = line.transform.localPosition;
+        line.transform.localPosition = new Vector3(x, position.y, position.z);
     }
 
     // Every symbol knocked out of the plaque put back. The title is a toy that
@@ -78,7 +128,10 @@ public class HallOfFame : MonoBehaviour
         if (nextOption != null) nextOption.SetActive(champions.Count > 1);
     }
 
-    void Render()
+    // xOffset is where along the plaque's travel this champion is built: 0 for
+    // one that is simply there, a screen's width to the left for one that is
+    // about to be scrolled in.
+    void Render(float xOffset)
     {
         bool empty = champions.Count == 0;
         string name = empty ? "NO RECORDS YET" : champions[index].name;
@@ -87,15 +140,14 @@ public class HallOfFame : MonoBehaviour
         int columns = Mathf.Max(BlockText.WordColumns(name), BlockText.WordColumns(score));
         float cell = Mathf.Min(MaxCell, MaxWidth / columns);
 
-        ClearSymbols();
-        BuildLine(nameLine, "ChampionName", name, cell);
-        BuildLine(scoreLine, "ChampionScore", score, cell);
+        BuildLine(nameLine, "ChampionName", name, cell, xOffset);
+        BuildLine(scoreLine, "ChampionScore", score, cell, xOffset);
         RefreshOptions();
     }
 
     // Both lines' symbols go at once, since one cell size serves the pair and a
     // new champion re-measures it.
-    void ClearSymbols()
+    static void ClearSymbols(List<GameObject> symbols)
     {
         foreach (var symbol in symbols)
         {
@@ -115,7 +167,7 @@ public class HallOfFame : MonoBehaviour
     // itself is only the anchor and the material the symbols wear; the UV origin
     // is each symbol's place in the word, which keeps the masonry running across
     // them as it does across the title's letters.
-    void BuildLine(MeshFilter line, string lineName, string word, float cell)
+    void BuildLine(MeshFilter line, string lineName, string word, float cell, float xOffset)
     {
         if (line == null || string.IsNullOrEmpty(word)) return;
         var renderer = line.GetComponent<MeshRenderer>();
@@ -130,7 +182,10 @@ public class HallOfFame : MonoBehaviour
             float x = BlockText.GlyphCentreX(word, i, cell);
             var symbol = new GameObject($"{lineName}{i}-{word[i]}");
             symbol.transform.SetParent(line.transform, false);
-            symbol.transform.localPosition = new Vector3(x, 0f, 0f);
+            // The UV origin stays the symbol's place in the word whatever the
+            // offset is, so the masonry runs across the letters the same way
+            // wherever along its travel the plaque was built.
+            symbol.transform.localPosition = new Vector3(x + xOffset, 0f, 0f);
             symbol.AddComponent<MeshFilter>().sharedMesh = BlockText.BuildMesh(
                 $"{lineName}{i}", cells, cell, LineDepth, LineUvScale, new Vector2(x, 0f));
             symbol.AddComponent<MeshRenderer>().sharedMaterial = material;

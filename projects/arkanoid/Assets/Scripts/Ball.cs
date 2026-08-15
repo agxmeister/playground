@@ -12,9 +12,25 @@ public class Ball : MonoBehaviour
     // ball can never settle into an endless horizontal bounce between the walls.
     const float MinVerticalFraction = 0.15f;
 
+    // The first launch leaves at this angle off vertical, to the right — a
+    // straight-up serve is a dull one, and a random tilt gives the player
+    // nothing to read off the screen before they press SPACE. The ball waits
+    // at the point on the paddle that angle belongs to, so where it sits is
+    // the promise of where it will go.
+    const float LaunchAngle = 15f;
+
+    // How far above the paddle the waiting ball rests.
+    const float RestHeight = 0.5f;
+
     Rigidbody2D body;
     Transform followTarget;
-    readonly Vector3 followOffset = new Vector3(0f, 0.5f, 0f);
+    Vector3 followOffset = new Vector3(0f, RestHeight, 0f);
+
+    // The paddle's arcade bounce maps a hit's distance from the middle, as a
+    // fraction of the paddle's half-width, straight onto the tangent of the
+    // angle the ball leaves at (see OnCollisionEnter2D). The launch reads the
+    // same tangent, which is what ties the two together.
+    static float LaunchTangent => Mathf.Tan(LaunchAngle * Mathf.Deg2Rad);
 
     public bool IsAttached => followTarget != null;
 
@@ -28,7 +44,20 @@ public class Ball : MonoBehaviour
         followTarget = paddle;
         body.bodyType = RigidbodyType2D.Kinematic;
         body.linearVelocity = Vector2.zero;
+        followOffset = RestOffset(paddle);
         transform.position = paddle.position + followOffset;
+    }
+
+    // Right of the paddle's middle by the fraction of its half-width that the
+    // bounce would turn into LaunchAngle — the spot the launch angle comes off.
+    // The paddle is measured rather than assumed, so the menu's paddle and the
+    // playfield's both serve from their own middle.
+    static Vector3 RestOffset(Transform paddle)
+    {
+        var collider = paddle.GetComponent<Collider2D>();
+        float halfWidth = collider != null ? collider.bounds.extents.x : 0f;
+        if (halfWidth <= 0f) halfWidth = 1f;
+        return new Vector3(LaunchTangent * halfWidth, RestHeight, 0f);
     }
 
     public void Launch()
@@ -36,8 +65,7 @@ public class Ball : MonoBehaviour
         if (!IsAttached) return;
         followTarget = null;
         body.bodyType = RigidbodyType2D.Dynamic;
-        float tilt = Random.Range(-0.5f, 0.5f);
-        body.linearVelocity = new Vector2(tilt, 1f).normalized * speed;
+        body.linearVelocity = new Vector2(LaunchTangent, 1f).normalized * speed;
     }
 
     void Update()
