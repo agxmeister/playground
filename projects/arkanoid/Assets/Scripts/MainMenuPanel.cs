@@ -21,9 +21,11 @@ public enum MainMenuOption { StartGame, HallOfFame, NextChampion, BackToMenu }
 // The paddle and ball are outside the slider, so they stay put while the world
 // behind them moves.
 //
-// There is deliberately no wall around the menu — the field is unlimited, and
-// a ball that leaves the camera's frame materialises back on the paddle
-// instead of being lost.
+// The menu's room is closed on three sides by the frame itself: MenuBorder
+// walls, built here and laid along the left, right and top edges of whatever
+// the camera actually sees, so the ball ricochets off the edge of the screen in
+// a burst of sparks rather than sailing out of it. The bottom is open, and a
+// ball that falls past the paddle materialises back on it.
 public class MainMenuPanel : MonoBehaviour
 {
     [SerializeField] GameObject playGroup;
@@ -95,12 +97,15 @@ public class MainMenuPanel : MonoBehaviour
     // The layout runs the full width of a 16:9 frame, which is wider than the
     // screen may actually be. Rather than authoring for the narrowest screen
     // anyone might play on and leaving a 16:9 one half empty, the arrows are
-    // pulled in from the edges to whatever frame they find themselves in.
-    void FitOptionsToFrame()
+    // pulled in from the edges to whatever frame they find themselves in — and
+    // the room's three walls are laid against those same edges.
+    void FitToFrame()
     {
         var camera = Camera.main;
         if (camera == null) return;
         fittedTo = new Vector2Int(Screen.width, Screen.height);
+
+        FitBorders(camera);
 
         foreach (var pair in authoredOptionX)
         {
@@ -119,6 +124,28 @@ public class MainMenuPanel : MonoBehaviour
         }
     }
 
+    // The menu's field is closed at the left, right and top by the frame itself
+    // — there is nothing to author, since the frame is only known once there is
+    // a window — so the walls are built here and laid against its edges on the
+    // menu's own plane, the one everything hittable stands on.
+    //
+    // The frame is measured as extents and then centred on *the room* rather
+    // than on the camera: the view travels out of this room to the playfield
+    // with the menu still up, and walls that followed it would take the room's
+    // edges with them.
+    void FitBorders(Camera camera)
+    {
+        if (ball == null) return;
+        float planeZ = ball.transform.position.z;
+        float depth = planeZ - camera.transform.position.z;
+        var corner = camera.ViewportToWorldPoint(new Vector3(1f, 1f, depth));
+        var middle = camera.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, depth));
+        MenuBorder.Fit(transform,
+            new Vector2(transform.position.x, middle.y),
+            new Vector2(corner.x - middle.x, corner.y - middle.y),
+            planeZ);
+    }
+
     public void Show()
     {
         gameObject.SetActive(true);
@@ -129,17 +156,19 @@ public class MainMenuPanel : MonoBehaviour
         RestoreTitle();
         if (playGroup != null) playGroup.SetActive(true);
         RestoreOptions();
-        FitOptionsToFrame();
+        FitToFrame();
         if (paddle != null) paddle.transform.localPosition = paddleRest;
         ResetBall();
     }
 
-    // The menu's rubble is made of unparented objects, so it would go on
-    // falling over the round that replaces the screen if it weren't swept up.
+    // The menu's rubble and its sparks are made of unparented objects, so they
+    // would go on falling over the round that replaces the screen if they
+    // weren't swept up.
     public void Hide()
     {
         gameObject.SetActive(false);
         Debris.ClearAll();
+        Ricochet.ClearAll();
     }
 
     // Called by MenuOption when the ball reaches it; the return value says
@@ -235,7 +264,7 @@ public class MainMenuPanel : MonoBehaviour
         // here and launch the ball behind the prompt.
         if (GameManager.Instance != null && GameManager.Instance.Paused) return;
 
-        if (fittedTo.x != Screen.width || fittedTo.y != Screen.height) FitOptionsToFrame();
+        if (fittedTo.x != Screen.width || fittedTo.y != Screen.height) FitToFrame();
 
         if (ball.IsAttached)
         {
@@ -254,7 +283,10 @@ public class MainMenuPanel : MonoBehaviour
 
     // "Out of the field" is literally out of the camera's view, which holds on
     // any aspect ratio — a hard-coded rectangle would strand the ball offscreen
-    // on a wide monitor and swallow it early on a narrow one.
+    // on a wide monitor and swallow it early on a narrow one. In practice this
+    // is the bottom edge, the one the borders leave open; the other three stay
+    // tested all the same, as the way home for a ball that a resized frame left
+    // on the wrong side of a wall.
     static bool OutOfFrame(Vector3 position)
     {
         var camera = Camera.main;
