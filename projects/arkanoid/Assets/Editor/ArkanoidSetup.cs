@@ -7,7 +7,7 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently forty-five of them, ending with the grouped HUD)
+// (currently forty-nine of them, ending with the playable menu screen)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -61,9 +61,11 @@ public static class ArkanoidSetup
     const float RoundedBrickCornerRadius = 0.12f;
     const float RoundBrickDiameter = 0.5f;
     // The main menu's 3D content: an opaque backdrop box across the whole
-    // frame and the word ARKANOID built out of blocks carrying the same brick
-    // masonry texture as the walls.
-    const string MenuTitleMeshPath = MeshesFolder + "/MenuTitle.asset";
+    // frame, and in front of it a small playable scene — the word ARKANOID as
+    // one hittable brick per letter, two option slabs, a paddle and a ball.
+    // The one-piece title mesh the letters replaced.
+    const string LegacyMenuTitleMeshPath = MeshesFolder + "/MenuTitle.asset";
+    const string MenuLettersMeshFolder = MeshesFolder + "/MenuLetters";
     const string MenuTitleMaterialPath = MaterialsFolder + "/MenuTitle.mat";
     const string MenuBackdropMaterialPath = MaterialsFolder + "/MenuBackdrop.mat";
     const string MenuTitleWord = "ARKANOID";
@@ -73,6 +75,50 @@ public static class ArkanoidSetup
     const float MenuTitleCell = 0.25f;
     const float MenuTitleDepth = 0.4f;
     const float MenuTitleUvScale = 2f;
+    const float MenuTitleY = 2.3f;
+    // Everything hittable sits on one plane just in front of the backdrop (a
+    // box at z -3 whose front face is at -3.2). 2D physics ignores Z entirely,
+    // so this is only about what the camera sees; the plane is what keeps the
+    // menu's bricks clear of the backdrop's surface.
+    const float MenuPlaneZ = -3.7f;
+    const string MenuOptionStartMeshPath = MeshesFolder + "/MenuOptionStart.asset";
+    const string MenuOptionRecordsMeshPath = MeshesFolder + "/MenuOptionRecords.asset";
+    const string MenuLabelStartMeshPath = MeshesFolder + "/MenuLabelStart.asset";
+    const string MenuLabelRecordsMeshPath = MeshesFolder + "/MenuLabelRecords.asset";
+    const string MenuOptionStartMaterialPath = MaterialsFolder + "/MenuOptionStart.mat";
+    const string MenuOptionRecordsMaterialPath = MaterialsFolder + "/MenuOptionRecords.mat";
+    const string MenuLabelMaterialPath = MaterialsFolder + "/MenuLabel.mat";
+    const string MenuStartLabel = "START";
+    const string MenuRecordsLabel = "HALL OF FAME";
+    // The slabs are sized to their labels rather than to each other, and the
+    // pair spans 11 units — inside the frame at this depth down to 4:3. The gap
+    // between them is a real alley rather than a margin: the paddle rests under
+    // it, so a ball launched straight up picks nothing and the player has to
+    // aim to choose.
+    const float MenuLabelCell = 0.07f;
+    const float MenuLabelDepth = 0.12f;
+    const float MenuOptionStartWidth = 2.8f;
+    const float MenuOptionRecordsWidth = 5.8f;
+    const float MenuOptionGap = 2.4f;
+    const float MenuOptionHeight = 1f;
+    const float MenuOptionDepth = 0.5f;
+    const float MenuOptionCornerRadius = 0.12f;
+    const float MenuOptionsY = 0.3f;
+    const float MenuOptionsSpan = MenuOptionStartWidth + MenuOptionGap + MenuOptionRecordsWidth;
+    // The alley's centre. Unequal slabs inside a centred pair put it off to one
+    // side, which is fine — the paddle simply starts there.
+    const float MenuPaddleRestX =
+        -MenuOptionsSpan / 2f + MenuOptionStartWidth + MenuOptionGap / 2f;
+    const float MenuPaddleY = -3.6f;
+    const float MenuPaddleXLimit = 5f;
+    // Slower than the playfield's 8: the menu is steered, not fought.
+    const float MenuBallSpeed = 6.5f;
+    // Downward tilt of the directional light. Everything in this game casts its
+    // shadow onto a surface *behind* it (the playfield backdrop, the menu
+    // backdrop), not onto a floor, so the shadow's offset from the object is
+    // gap x tan(pitch) — a steeper, "higher" light smears the shadow further
+    // down, and a shallower one tucks it back in behind the object.
+    const float LightPitch = 30f;
 
     [InitializeOnLoadMethod]
     static void Setup()
@@ -171,23 +217,10 @@ public static class ArkanoidSetup
             return;
         }
 
-        // Stage 9: main menu panel (title screen). Authored inactive, like the
-        // records panel, so the guard must include inactive objects.
-        if (Object.FindAnyObjectByType<MainMenuPanel>(FindObjectsInactive.Include) == null)
-        {
-            BuildMainMenu();
-            Debug.Log("[ArkanoidSetup] Stage 9: built the main menu panel (scene left dirty).");
-            return;
-        }
-
-        // Stage 10: persist stage 9's panel, with the same tick-deferred save
-        // as stage 8.
-        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains("MainMenuPanel"))
-        {
-            EditorApplication.update += SaveSceneOnce;
-            Debug.Log("[ArkanoidSetup] Stage 10: queued scene save for the next editor tick.");
-            return;
-        }
+        // Stages 9 and 10 authored the main menu as a UGUI panel and saved it.
+        // The menu is scene content now (stage 42 builds it, MainMenuPanel
+        // rides on the MenuScreen root), so both are gone; the numbering of
+        // everything after them is left alone rather than shuffled.
 
         // Stage 11: crack overlay textures on disk, one light/heavy pair per
         // random shape variant.
@@ -529,11 +562,11 @@ public static class ArkanoidSetup
         // lit the playfield from the top right, which is what actually shows
         // up in the shadows (a directional light only has a direction). Drop
         // the yaw so the light faces the playfield head-on horizontally,
-        // keeping the 50° downward tilt so the shadows — the main depth cue —
-        // stay visible below the objects instead of hiding behind them.
+        // keeping a downward tilt so the shadows — the main depth cue — stay
+        // visible below the objects instead of hiding behind them.
         if (sceneLight != null && Mathf.Abs(sceneLight.transform.forward.x) > 0.001f)
         {
-            sceneLight.transform.rotation = Quaternion.Euler(50f, 0f, 0f);
+            sceneLight.transform.rotation = Quaternion.Euler(LightPitch, 0f, 0f);
             EditorSceneManager.MarkSceneDirty(scene);
             Debug.Log("[ArkanoidSetup] Stage 34: centered the light's direction (scene left dirty).");
             return;
@@ -618,26 +651,50 @@ public static class ArkanoidSetup
             return;
         }
 
-        // Stages 40-43 build the 3D main menu screen: the ARKANOID word as
-        // brick-textured blocks in front of an opaque backdrop, with the UI
-        // panel reduced to the selectable option list on top of it.
+        // Stages 40-43 build the main menu screen: the ARKANOID word as
+        // brick-textured blocks in front of an opaque backdrop, plus the
+        // playable half — option slabs, paddle and ball — that the player
+        // steers to pick an option.
 
-        // Stage 40: the block-letter title mesh.
-        var menuTitleMesh = AssetDatabase.LoadAssetAtPath<Mesh>(MenuTitleMeshPath);
-        if (menuTitleMesh == null)
+        // Stage 40: the menu's block geometry. The title is one mesh per
+        // letter, not one for the word, so the ball can knock the letters out
+        // one at a time; each letter's UVs carry its place in the word, which
+        // keeps the masonry running across the joins.
+        if (!File.Exists(ToAbsolute(MenuLetterMeshPath(0)))
+            || !File.Exists(ToAbsolute(MenuOptionStartMeshPath)))
         {
+            Directory.CreateDirectory(ToAbsolute(MenuLettersMeshFolder));
+            for (int i = 0; i < MenuTitleWord.Length; i++)
+                AssetDatabase.CreateAsset(
+                    BuildBlockMesh($"Letter{i}", GlyphCells(MenuTitleWord[i]), MenuTitleCell, MenuTitleDepth,
+                        MenuTitleUvScale, new Vector2(GlyphCentreX(MenuTitleWord, i, MenuTitleCell), 0f)),
+                    MenuLetterMeshPath(i));
             AssetDatabase.CreateAsset(
-                BuildBlockTextMesh("MenuTitle", MenuTitleWord, MenuTitleCell, MenuTitleDepth, MenuTitleUvScale),
-                MenuTitleMeshPath);
-            Debug.Log("[ArkanoidSetup] Stage 40: created the menu title mesh.");
+                BuildRoundedPrismMesh("MenuOptionStart", MenuOptionStartWidth, MenuOptionHeight,
+                    MenuOptionDepth, MenuOptionCornerRadius, PaddleCornerSegments),
+                MenuOptionStartMeshPath);
+            AssetDatabase.CreateAsset(
+                BuildRoundedPrismMesh("MenuOptionRecords", MenuOptionRecordsWidth, MenuOptionHeight,
+                    MenuOptionDepth, MenuOptionCornerRadius, PaddleCornerSegments),
+                MenuOptionRecordsMeshPath);
+            AssetDatabase.CreateAsset(
+                BuildBlockTextMesh("MenuLabelStart", MenuStartLabel, MenuLabelCell, MenuLabelDepth, 1f),
+                MenuLabelStartMeshPath);
+            AssetDatabase.CreateAsset(
+                BuildBlockTextMesh("MenuLabelRecords", MenuRecordsLabel, MenuLabelCell, MenuLabelDepth, 1f),
+                MenuLabelRecordsMeshPath);
+            AssetDatabase.DeleteAsset(LegacyMenuTitleMeshPath);
+            Debug.Log("[ArkanoidSetup] Stage 40: created the menu block meshes.");
             return;
         }
 
         // Stage 41: the menu materials — brick masonry for the title, flat
-        // dark for the backdrop it stands in front of.
+        // dark for the backdrop it stands in front of, and the option slabs in
+        // two of the playfield's brick colours with pale letters on top.
         var menuTitleMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuTitleMaterialPath);
         var menuBackdropMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuBackdropMaterialPath);
-        if (menuTitleMaterial == null || menuBackdropMaterial == null)
+        var menuLabelMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuLabelMaterialPath);
+        if (menuTitleMaterial == null || menuBackdropMaterial == null || menuLabelMaterial == null)
         {
             var brickWall = AssetDatabase.LoadAssetAtPath<Texture2D>(BrickWallTexturePath);
             if (brickWall == null) return;
@@ -645,17 +702,21 @@ public static class ArkanoidSetup
                 CreateTexturedMaterial(MenuTitleMaterialPath, brickWall, new Color(0.86f, 0.36f, 0.26f));
             if (menuBackdropMaterial == null)
                 CreateLitMaterial(MenuBackdropMaterialPath, new Color(0.05f, 0.07f, 0.12f));
+            if (menuLabelMaterial == null)
+            {
+                CreateLitMaterial(MenuOptionStartMaterialPath, new Color(0.18f, 0.80f, 0.44f));
+                CreateLitMaterial(MenuOptionRecordsMaterialPath, new Color(0.20f, 0.60f, 0.86f));
+                CreateLitMaterial(MenuLabelMaterialPath, new Color(0.94f, 0.95f, 0.98f));
+            }
             Debug.Log("[ArkanoidSetup] Stage 41: created the menu materials.");
             return;
         }
 
-        // Stage 42: the MenuScreen scene content plus the rebuilt (now
-        // interactive) menu panel, which needs the screen to point at.
+        // Stage 42: the MenuScreen scene content, MainMenuPanel and all.
         if (FindRootObject("MenuScreen") == null)
         {
-            BuildMenuScreen(menuTitleMesh, menuTitleMaterial, menuBackdropMaterial);
-            RebuildMainMenu();
-            Debug.Log("[ArkanoidSetup] Stage 42: built the 3D main menu screen (scene left dirty).");
+            BuildMenuScreen();
+            Debug.Log("[ArkanoidSetup] Stage 42: built the main menu screen (scene left dirty).");
             return;
         }
 
@@ -689,7 +750,86 @@ public static class ArkanoidSetup
             Debug.Log("[ArkanoidSetup] Stage 45: queued scene save for the next editor tick.");
             return;
         }
+
+        // Stage 46: shrink the shadows by flattening the light's tilt from the
+        // 50 degrees stage 34 set to LightPitch. See LightPitch: the shadow
+        // lands on the surface behind the object, so less tilt means a tighter
+        // shadow — most visibly the ARKANOID title's, which was dropping two
+        // fifths of a letter-height below the word.
+        if (sceneLight != null && sceneLight.transform.eulerAngles.x > LightPitch + 1f)
+        {
+            sceneLight.transform.rotation = Quaternion.Euler(LightPitch, 0f, 0f);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 46: flattened the light's tilt (scene left dirty).");
+            return;
+        }
+
+        // Stage 47: persist stage 46, gated on the scene file still holding the
+        // old 50-degree rotation quaternion.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("m_LocalRotation: {x: 0.4226183,"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 47: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 48: strip the menu panel down to its option list — the high
+        // score line and the key hint both go, leaving the 3D title and the two
+        // options. The panel is authored inactive, so it needs the
+        // inactive-inclusive lookup.
+        var menuPanel = Object.FindAnyObjectByType<MainMenuPanel>(FindObjectsInactive.Include);
+        if (menuPanel != null && menuPanel.transform.Find("Hint") != null)
+        {
+            Object.DestroyImmediate(menuPanel.transform.Find("Hint").gameObject);
+            var highScoreLine = menuPanel.transform.Find("HighScore");
+            if (highScoreLine != null) Object.DestroyImmediate(highScoreLine.gameObject);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 48: removed the menu's high score line and key hint (scene left dirty).");
+            return;
+        }
+
+        // Stage 49: persist stage 48, gated on the hint's text still being in
+        // the scene file.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("UP / DOWN"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 49: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 50: rebuild the menu as a playable screen. The old one is a
+        // one-piece title with a UGUI option list beside it — nothing of it
+        // survives, so both go and stage 42's builder authors the new shape.
+        // The guard also catches a screen built before the paddle moved into
+        // the alley between the slabs, since that reshaped the whole layout.
+        var builtMenuScreen = FindRootObject("MenuScreen");
+        var builtMenuPaddle = builtMenuScreen != null
+            ? builtMenuScreen.transform.Find("MenuPlay/MenuPaddle")
+            : null;
+        if (builtMenuScreen != null
+            && (builtMenuPaddle == null
+                || !Mathf.Approximately(builtMenuPaddle.localPosition.x, MenuPaddleRestX)))
+        {
+            Object.DestroyImmediate(builtMenuScreen);
+            var uiMenu = Object.FindAnyObjectByType<MainMenuPanel>(FindObjectsInactive.Include);
+            if (uiMenu != null) Object.DestroyImmediate(uiMenu.gameObject);
+            BuildMenuScreen();
+            Debug.Log("[ArkanoidSetup] Stage 50: rebuilt the menu as a playable screen (scene left dirty).");
+            return;
+        }
+
+        // Stage 51: persist stage 50, gated on the scene file not yet holding
+        // the paddle at its place in the alley.
+        if (!File.ReadAllText(ToAbsolute(scene.path))
+            .Contains($"m_LocalPosition: {{x: {MenuPaddleRestX}, y: {MenuPaddleY}, z: {MenuPlaneZ}}}"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 51: queued scene save for the next editor tick.");
+            return;
+        }
     }
+
+    static string MenuLetterMeshPath(int index) => $"{MenuLettersMeshFolder}/Letter{index}.asset";
 
     // Runs once, on the first editor tick after the reload that registered it.
     static void SaveSceneOnce()
@@ -1179,7 +1319,10 @@ public static class ArkanoidSetup
     }
 
     // A 5 x 7 block font: one string per glyph row, top row first, '#' where
-    // the glyph is solid. Only the letters of ARKANOID are defined.
+    // the glyph is solid. Only the characters the menu spells are defined —
+    // ARKANOID plus the two option labels.
+    const int BlockGlyphWidth = 5, BlockGlyphHeight = 7;
+
     static readonly Dictionary<char, string[]> BlockFont = new Dictionary<char, string[]>
     {
         { 'A', new[] { ".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#" } },
@@ -1189,20 +1332,68 @@ public static class ArkanoidSetup
         { 'O', new[] { ".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###." } },
         { 'I', new[] { "#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####" } },
         { 'D', new[] { "####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####." } },
+        { 'S', new[] { ".####", "#....", "#....", ".###.", "....#", "....#", "####." } },
+        { 'T', new[] { "#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.." } },
+        { 'H', new[] { "#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#" } },
+        { 'L', new[] { "#....", "#....", "#....", "#....", "#....", "#....", "#####" } },
+        { 'F', new[] { "#####", "#....", "#....", "####.", "#....", "#....", "#...." } },
+        { 'M', new[] { "#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#" } },
+        { 'E', new[] { "#####", "#....", "#....", "####.", "#....", "#....", "#####" } },
+        { ' ', new[] { ".....", ".....", ".....", ".....", ".....", ".....", "....." } },
     };
 
-    // A word rendered as solid 3D geometry from the block font above, centered
-    // on the origin: every horizontal run of solid cells in a glyph row
-    // becomes one box, so the word is a handful of blocks rather than one per
-    // cell. UVs come straight from the world position of each corner (scaled
-    // by uvScale), which keeps the brick masonry continuous across the whole
-    // word instead of restarting on every box face.
-    static Mesh BuildBlockTextMesh(string name, string word, float cell, float depth, float uvScale)
+    static bool[,] GlyphCells(char character)
     {
-        const int glyphWidth = 5, glyphHeight = 7;
-        int columns = word.Length * (glyphWidth + 1) - 1; // one blank column between glyphs
+        var glyph = BlockFont[character];
+        var cells = new bool[BlockGlyphHeight, BlockGlyphWidth];
+        for (int row = 0; row < BlockGlyphHeight; row++)
+            for (int column = 0; column < BlockGlyphWidth; column++)
+                cells[row, column] = glyph[row][column] == '#';
+        return cells;
+    }
+
+    // A whole word's cells, with one blank column between glyphs.
+    static bool[,] WordCells(string word)
+    {
+        var cells = new bool[BlockGlyphHeight, WordColumns(word)];
+        int at = 0;
+        foreach (var character in word)
+        {
+            var glyph = BlockFont[character];
+            for (int row = 0; row < BlockGlyphHeight; row++)
+                for (int column = 0; column < BlockGlyphWidth; column++)
+                    cells[row, at + column] = glyph[row][column] == '#';
+            at += BlockGlyphWidth + 1;
+        }
+        return cells;
+    }
+
+    static int WordColumns(string word) => word.Length * (BlockGlyphWidth + 1) - 1;
+
+    // Where one glyph's centre falls in a word whose own centre is the origin.
+    static float GlyphCentreX(string word, int index, float cell) =>
+        -WordColumns(word) * cell / 2f
+        + index * (BlockGlyphWidth + 1) * cell
+        + BlockGlyphWidth * cell / 2f;
+
+    static Mesh BuildBlockTextMesh(string name, string word, float cell, float depth, float uvScale) =>
+        BuildBlockMesh(name, WordCells(word), cell, depth, uvScale, Vector2.zero);
+
+    // Solid 3D geometry for a grid of block-font cells, centered on the grid's
+    // own box: every horizontal run of solid cells in a row becomes one box, so
+    // a glyph is a handful of blocks rather than one per cell.
+    //
+    // UVs come from each corner's position offset by uvOrigin (all scaled by
+    // uvScale). Passing a piece's place within a larger word as uvOrigin keeps
+    // the brick masonry running continuously across separately-built pieces —
+    // which is what lets the title be eight independent letters that still read
+    // as one wall. The offset only ever moves the axis it belongs to, so the
+    // side faces (mapped from Z) stay put whatever a piece's X.
+    static Mesh BuildBlockMesh(string name, bool[,] cells, float cell, float depth, float uvScale, Vector2 uvOrigin)
+    {
+        int rows = cells.GetLength(0), columns = cells.GetLength(1);
         float halfWidth = columns * cell / 2f;
-        float halfHeight = glyphHeight * cell / 2f;
+        float halfHeight = rows * cell / 2f;
         float halfDepth = depth / 2f;
 
         var mesh = new Mesh { name = name };
@@ -1224,9 +1415,9 @@ public static class ArkanoidSetup
             triangles.Add(start); triangles.Add(start + 3); triangles.Add(start + 2);
         }
 
-        System.Func<Vector3, Vector2> xy = p => new Vector2(p.x, p.y);
-        System.Func<Vector3, Vector2> xz = p => new Vector2(p.x, p.z);
-        System.Func<Vector3, Vector2> zy = p => new Vector2(p.z, p.y);
+        System.Func<Vector3, Vector2> xy = p => new Vector2(p.x + uvOrigin.x, p.y + uvOrigin.y);
+        System.Func<Vector3, Vector2> xz = p => new Vector2(p.x + uvOrigin.x, p.z);
+        System.Func<Vector3, Vector2> zy = p => new Vector2(p.z, p.y + uvOrigin.y);
 
         void Box(float x0, float x1, float y0, float y1)
         {
@@ -1239,23 +1430,14 @@ public static class ArkanoidSetup
             Face(new Vector3(x0, y0, z1), new Vector3(x0, y0, z0), new Vector3(x0, y1, z0), new Vector3(x0, y1, z1), zy); // left (-X)
         }
 
-        for (int row = 0; row < glyphHeight; row++)
+        for (int row = 0; row < rows; row++)
         {
-            var solid = new bool[columns];
-            int at = 0;
-            foreach (var character in word)
-            {
-                var glyph = BlockFont[character];
-                for (int c = 0; c < glyphWidth; c++) solid[at + c] = glyph[row][c] == '#';
-                at += glyphWidth + 1;
-            }
-
             float y1 = halfHeight - row * cell, y0 = y1 - cell;
             for (int c = 0; c < columns; c++)
             {
-                if (!solid[c]) continue;
+                if (!cells[row, c]) continue;
                 int end = c;
-                while (end + 1 < columns && solid[end + 1]) end++;
+                while (end + 1 < columns && cells[row, end + 1]) end++;
                 Box(-halfWidth + c * cell, -halfWidth + (end + 1) * cell, y0, y1);
                 c = end;
             }
@@ -1514,13 +1696,23 @@ public static class ArkanoidSetup
         EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
     }
 
-    // The scene half of the main menu: an opaque box filling the camera's
-    // frame well short of the playfield, with the block-letter title floating
-    // in front of it so the directional light throws the word's shadow onto
-    // the backdrop. Authored inactive — MainMenuPanel switches it on.
-    static void BuildMenuScreen(Mesh titleMesh, Material titleMaterial, Material backdropMaterial)
+    // The whole main menu, which is scene content rather than a UI panel: an
+    // opaque box filling the camera's frame well short of the playfield, and in
+    // front of it a small playable scene — the title as one hittable brick per
+    // letter, the two option slabs, a paddle and a ball. MainMenuPanel rides on
+    // the root, so showing the menu is switching this subtree on. Authored
+    // inactive, like the other panels.
+    static void BuildMenuScreen()
     {
+        var titleMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuTitleMaterialPath);
+        var backdropMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuBackdropMaterialPath);
+        var labelMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuLabelMaterialPath);
+        var paddleMaterial = AssetDatabase.LoadAssetAtPath<Material>(PaddleMaterialPath);
+        var paddleMesh = AssetDatabase.LoadAssetAtPath<Mesh>(PaddleMeshPath);
+        var ballPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BallPrefabPath);
+
         var root = new GameObject("MenuScreen");
+        var menu = root.AddComponent<MainMenuPanel>();
 
         // Deliberately oversized: at z -3 the camera's frame is ~10 units tall,
         // and this stays covered on any aspect ratio.
@@ -1534,24 +1726,113 @@ public static class ArkanoidSetup
         backdropRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
         // Tilted back a little so the letters' tops and sides read as solid
-        // blocks rather than a flat cutout.
+        // blocks rather than a flat cutout. The tilt is about X, which 2D
+        // physics ignores, so the letters' colliders are unaffected by it.
         var title = new GameObject("MenuTitle");
         title.transform.SetParent(root.transform, false);
-        title.transform.localPosition = new Vector3(0f, 2.3f, -3.7f);
+        title.transform.localPosition = new Vector3(0f, MenuTitleY, MenuPlaneZ);
         title.transform.localRotation = Quaternion.Euler(-8f, 0f, 0f);
-        title.AddComponent<MeshFilter>().sharedMesh = titleMesh;
-        title.AddComponent<MeshRenderer>().sharedMaterial = titleMaterial;
+        for (int i = 0; i < MenuTitleWord.Length; i++)
+        {
+            var letter = new GameObject($"Letter{i}-{MenuTitleWord[i]}");
+            letter.transform.SetParent(title.transform, false);
+            letter.transform.localPosition = new Vector3(GlyphCentreX(MenuTitleWord, i, MenuTitleCell), 0f, 0f);
+            letter.AddComponent<MeshFilter>().sharedMesh =
+                AssetDatabase.LoadAssetAtPath<Mesh>(MenuLetterMeshPath(i));
+            letter.AddComponent<MeshRenderer>().sharedMaterial = titleMaterial;
+            // The glyph's whole 5 x 7 box, holes included: the letters read as
+            // blocks, and a collider tracing the strokes would let the ball
+            // rattle around inside an O.
+            letter.AddComponent<BoxCollider2D>().size =
+                new Vector2(BlockGlyphWidth * MenuTitleCell, BlockGlyphHeight * MenuTitleCell);
+            letter.AddComponent<MenuTitleBlock>();
+        }
+
+        // Everything the player actually drives. Grouped so the menu's hall of
+        // fame view can drop it and leave the backdrop and title standing.
+        var play = new GameObject("MenuPlay");
+        play.transform.SetParent(root.transform, false);
+
+        CreateMenuOption(play.transform, "OptionStart", MainMenuOption.StartGame,
+            -MenuOptionsSpan / 2f + MenuOptionStartWidth / 2f, MenuOptionStartWidth,
+            MenuOptionStartMeshPath, MenuOptionStartMaterialPath, MenuLabelStartMeshPath, labelMaterial);
+        CreateMenuOption(play.transform, "OptionRecords", MainMenuOption.HallOfFame,
+            MenuOptionsSpan / 2f - MenuOptionRecordsWidth / 2f, MenuOptionRecordsWidth,
+            MenuOptionRecordsMeshPath, MenuOptionRecordsMaterialPath, MenuLabelRecordsMeshPath, labelMaterial);
+
+        var paddleGo = new GameObject("MenuPaddle");
+        paddleGo.transform.SetParent(play.transform, false);
+        paddleGo.transform.localPosition = new Vector3(MenuPaddleRestX, MenuPaddleY, MenuPlaneZ);
+        paddleGo.AddComponent<MeshFilter>().sharedMesh = paddleMesh;
+        paddleGo.AddComponent<MeshRenderer>().sharedMaterial = paddleMaterial;
+        var menuPaddleCollider = paddleGo.AddComponent<BoxCollider2D>();
+        menuPaddleCollider.size = new Vector2(
+            PaddleWidth - 2f * PaddleCornerRadius, PaddleHeight - 2f * PaddleCornerRadius);
+        menuPaddleCollider.edgeRadius = PaddleCornerRadius;
+        paddleGo.AddComponent<Rigidbody2D>().bodyType = RigidbodyType2D.Kinematic;
+        var menuPaddle = paddleGo.AddComponent<Paddle>();
+        var paddleSo = new SerializedObject(menuPaddle);
+        paddleSo.FindProperty("xLimit").floatValue = MenuPaddleXLimit;
+        paddleSo.ApplyModifiedPropertiesWithoutUndo();
+
+        var ballGo = (GameObject)PrefabUtility.InstantiatePrefab(ballPrefab);
+        ballGo.name = "MenuBall";
+        ballGo.transform.SetParent(play.transform, false);
+        ballGo.transform.localPosition = new Vector3(MenuPaddleRestX, MenuPaddleY + 0.5f, MenuPlaneZ);
+        var menuBall = ballGo.GetComponent<Ball>();
+        var ballSo = new SerializedObject(menuBall);
+        ballSo.FindProperty("speed").floatValue = MenuBallSpeed;
+        ballSo.ApplyModifiedPropertiesWithoutUndo();
+
+        var menuSo = new SerializedObject(menu);
+        menuSo.FindProperty("playGroup").objectReferenceValue = play;
+        menuSo.FindProperty("title").objectReferenceValue = title.transform;
+        menuSo.FindProperty("paddle").objectReferenceValue = menuPaddle;
+        menuSo.FindProperty("ball").objectReferenceValue = menuBall;
+        menuSo.ApplyModifiedPropertiesWithoutUndo();
+
+        var manager = Object.FindAnyObjectByType<GameManager>();
+        var managerSo = new SerializedObject(manager);
+        managerSo.FindProperty("mainMenuPanel").objectReferenceValue = menu;
+        SetObjectArray(managerSo, "playfieldObjects",
+            new Object[] { FindRootObject("Walls"), FindRootObject("Paddle") });
+        managerSo.ApplyModifiedPropertiesWithoutUndo();
 
         root.SetActive(false);
+
+        // Mark dirty but defer the save: a programmatic SaveScene here raised
+        // the modal "scene changed on disk" dialog before.
+        EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
     }
 
-    // Stage-42 retrofit: the panel predates the 3D screen and the option list,
-    // so it is thrown away and re-authored from scratch.
-    static void RebuildMainMenu()
+    // One option: a rounded slab the ball can hit, with its label standing
+    // proud of the slab's front face so the light picks the letters out.
+    static void CreateMenuOption(Transform parent, string name, MainMenuOption option, float x, float width,
+        string slabMeshPath, string slabMaterialPath, string labelMeshPath, Material labelMaterial)
     {
-        var existing = Object.FindAnyObjectByType<MainMenuPanel>(FindObjectsInactive.Include);
-        if (existing != null) Object.DestroyImmediate(existing.gameObject);
-        BuildMainMenu();
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = new Vector3(x, MenuOptionsY, MenuPlaneZ);
+        go.AddComponent<MeshFilter>().sharedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(slabMeshPath);
+        go.AddComponent<MeshRenderer>().sharedMaterial =
+            AssetDatabase.LoadAssetAtPath<Material>(slabMaterialPath);
+
+        // Shrunk by the corner radius on every side with edgeRadius filling it
+        // back out, the same rounded rectangle as the paddle and rounded brick.
+        var collider = go.AddComponent<BoxCollider2D>();
+        collider.size = new Vector2(
+            width - 2f * MenuOptionCornerRadius, MenuOptionHeight - 2f * MenuOptionCornerRadius);
+        collider.edgeRadius = MenuOptionCornerRadius;
+
+        var optionSo = new SerializedObject(go.AddComponent<MenuOption>());
+        optionSo.FindProperty("option").enumValueIndex = (int)option;
+        optionSo.ApplyModifiedPropertiesWithoutUndo();
+
+        var label = new GameObject("Label");
+        label.transform.SetParent(go.transform, false);
+        label.transform.localPosition = new Vector3(0f, 0f, -(MenuOptionDepth + MenuLabelDepth) / 2f);
+        label.AddComponent<MeshFilter>().sharedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(labelMeshPath);
+        label.AddComponent<MeshRenderer>().sharedMaterial = labelMaterial;
     }
 
     static GameObject FindRootObject(string name)
@@ -1559,69 +1840,6 @@ public static class ArkanoidSetup
         foreach (var root in SceneManager.GetActiveScene().GetRootGameObjects())
             if (root.name == name) return root;
         return null;
-    }
-
-    static void BuildMainMenu()
-    {
-        var canvas = GameObject.Find("ScoreBoard");
-        var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-
-        var panelGo = new GameObject("MainMenuPanel", typeof(RectTransform));
-        var rect = panelGo.GetComponent<RectTransform>();
-        rect.SetParent(canvas.transform, false);
-        rect.anchorMin = Vector2.zero;
-        rect.anchorMax = Vector2.one;
-        rect.offsetMin = Vector2.zero;
-        rect.offsetMax = Vector2.zero;
-        var menu = panelGo.AddComponent<MainMenuPanel>();
-        // No background image and no UI title: the opaque screen and the word
-        // ARKANOID are 3D scene content (MenuScreen), which an overlay canvas
-        // would otherwise hide.
-
-        var highScore = CreateText(panelGo.transform, "HighScore", "", 30, new Vector2(0.5f, 0.5f), new Vector2(0f, 70f), TextAnchor.MiddleCenter, font, new Color(0.85f, 0.87f, 0.92f));
-        highScore.rectTransform.sizeDelta = new Vector2(720f, 48f);
-
-        // Each option is a highlight bar (transparent until selected) with its
-        // label inside; the bar's rect doubles as the mouse hit area.
-        var labels = new[] { "START", "HALL OF FAME" };
-        var optionTexts = new Text[labels.Length];
-        var optionHighlights = new Image[labels.Length];
-        for (int i = 0; i < labels.Length; i++)
-        {
-            var rowGo = new GameObject("Option" + i, typeof(RectTransform));
-            var rowRect = rowGo.GetComponent<RectTransform>();
-            rowRect.SetParent(panelGo.transform, false);
-            rowRect.anchorMin = rowRect.anchorMax = rowRect.pivot = new Vector2(0.5f, 0.5f);
-            rowRect.sizeDelta = new Vector2(540f, 80f);
-            rowRect.anchoredPosition = new Vector2(0f, -60f - i * 96f);
-            optionHighlights[i] = rowGo.AddComponent<Image>();
-            optionHighlights[i].color = new Color(1f, 1f, 1f, 0f);
-
-            var label = CreateText(rowGo.transform, "Label", labels[i], 44, new Vector2(0.5f, 0.5f), Vector2.zero, TextAnchor.MiddleCenter, font, new Color(0.62f, 0.66f, 0.74f));
-            label.rectTransform.sizeDelta = new Vector2(540f, 80f);
-            optionTexts[i] = label;
-        }
-
-        var hint = CreateText(panelGo.transform, "Hint", "UP / DOWN or MOUSE — select     ENTER — confirm", 22, new Vector2(0.5f, 0f), new Vector2(0f, 70f), TextAnchor.LowerCenter, font, new Color(0.45f, 0.5f, 0.58f));
-        hint.rectTransform.sizeDelta = new Vector2(900f, 40f);
-
-        var menuSo = new SerializedObject(menu);
-        menuSo.FindProperty("highScoreText").objectReferenceValue = highScore;
-        menuSo.FindProperty("menuScreen").objectReferenceValue = FindRootObject("MenuScreen");
-        SetObjectArray(menuSo, "optionTexts", optionTexts);
-        SetObjectArray(menuSo, "optionHighlights", optionHighlights);
-        menuSo.ApplyModifiedPropertiesWithoutUndo();
-
-        var manager = Object.FindAnyObjectByType<GameManager>();
-        var managerSo = new SerializedObject(manager);
-        managerSo.FindProperty("mainMenuPanel").objectReferenceValue = menu;
-        managerSo.ApplyModifiedPropertiesWithoutUndo();
-
-        panelGo.SetActive(false);
-
-        // Mark dirty but defer the save to stage 10: a programmatic SaveScene
-        // here raised the modal "scene changed on disk" dialog before.
-        EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
     }
 
     // Builds a caption ("SCORE") with a value line under it, anchored to the top

@@ -16,6 +16,11 @@ public class GameManager : MonoBehaviour
     [SerializeField] ScoreBoard scoreBoard;
     [SerializeField] RecordsPanel recordsPanel;
     [SerializeField] MainMenuPanel mainMenuPanel;
+    // The walls and the paddle, switched off while the menu is up. 2D physics
+    // ignores Z, so the playfield's colliders would otherwise fence in the
+    // menu's ball even though the menu screen hides them, and both paddles
+    // would answer the arrow keys at once.
+    [SerializeField] GameObject[] playfieldObjects;
 
     [SerializeField] int rows = 5;
     [SerializeField] int columns = 8;
@@ -75,11 +80,11 @@ public class GameManager : MonoBehaviour
     {
         transitionFrame = Time.frameCount;
         menuShowingRecords = false;
-        // The menu screen carries its own high score line; the score and lives
-        // readouts belong to a round in progress.
+        // The score and lives readouts belong to a round in progress.
         if (scoreBoard != null) scoreBoard.SetVisible(false);
+        SetPlayfieldActive(false);
         if (recordsPanel != null) recordsPanel.Hide();
-        if (mainMenuPanel != null) mainMenuPanel.Show(highScore);
+        if (mainMenuPanel != null) mainMenuPanel.Show();
         state = State.Menu;
     }
 
@@ -104,6 +109,7 @@ public class GameManager : MonoBehaviour
     void NewGame()
     {
         previousRecord = highScore;
+        SetPlayfieldActive(true);
         if (scoreBoard != null) scoreBoard.SetVisible(true);
         if (recordsPanel != null) recordsPanel.Hide();
         if (mainMenuPanel != null) mainMenuPanel.Hide();
@@ -111,6 +117,13 @@ public class GameManager : MonoBehaviour
         SetLives(startingLives);
         BuildLevel();
         SpawnBall();
+    }
+
+    void SetPlayfieldActive(bool active)
+    {
+        if (playfieldObjects == null) return;
+        foreach (var playfieldObject in playfieldObjects)
+            if (playfieldObject != null) playfieldObject.SetActive(active);
     }
 
     void SetScore(int value)
@@ -320,7 +333,13 @@ public class GameManager : MonoBehaviour
 
     void OnGUI()
     {
-        if (state != State.Ready) return;
+        // The same prompt serves the round and the menu: both sit a ball on a
+        // paddle and wait for SPACE, and on the menu it is the one thing that
+        // isn't self-evident about aiming at an option.
+        bool waiting = state == State.Ready
+            || (state == State.Menu && !menuShowingRecords
+                && mainMenuPanel != null && mainMenuPanel.BallWaiting);
+        if (!waiting) return;
 
         var banner = new GUIStyle(GUI.skin.label)
         {
@@ -329,6 +348,9 @@ public class GameManager : MonoBehaviour
             alignment = TextAnchor.MiddleCenter,
         };
         banner.normal.textColor = Color.white;
-        GUI.Label(new Rect(0f, Screen.height / 2f - 60f, Screen.width, 120f), "Press SPACE to launch", banner);
+        // Mid-screen during a round, but down by the paddle on the menu, where
+        // the middle of the screen is where the option slabs are.
+        float y = state == State.Ready ? Screen.height / 2f - 60f : Screen.height * 0.72f;
+        GUI.Label(new Rect(0f, y, Screen.width, 120f), "Press SPACE to launch", banner);
     }
 }

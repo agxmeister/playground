@@ -1,134 +1,119 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
-using UnityEngine.UI;
 
 public enum MainMenuOption { StartGame, HallOfFame }
 
-// Title screen. The opaque part of the screen is 3D scene content (menuScreen:
-// a full-frame backdrop box plus the brick-textured ARKANOID word), so this
-// UGUI panel carries no background of its own — only the high score line and
-// the option list drawn on top of it.
+// The title screen — a small playable scene rather than a UI panel. The
+// component sits on the MenuScreen root itself (see "The main menu screen" in
+// CLAUDE.md), so showing and hiding the menu is just switching that subtree on
+// and off, and everything in it is real geometry the ball can hit: the
+// ARKANOID letters, the two option slabs, the paddle.
 //
-// Unlike the other panels this one is interactive: it owns the selection
-// (arrows / W-S / mouse hover) and reports the chosen option to GameManager.
+// Picking an option means aiming: the ball waits on the paddle, the player
+// slides the paddle under the option they want and launches with SPACE, just
+// as they would launch a round. The two slabs leave an alley between them that
+// the paddle rests in, so a launch straight up picks nothing.
+//
+// There is deliberately no wall around the menu — the field is unlimited, and
+// a ball that leaves the camera's frame materialises back on the paddle
+// instead of being lost.
 public class MainMenuPanel : MonoBehaviour
 {
-    [SerializeField] Text highScoreText;
-    [SerializeField] GameObject menuScreen;
-    [SerializeField] Text[] optionTexts;
-    [SerializeField] Image[] optionHighlights;
+    [SerializeField] GameObject playGroup;
+    [SerializeField] Transform title;
+    [SerializeField] Paddle paddle;
+    [SerializeField] Ball ball;
 
     public event System.Action<MainMenuOption> OptionChosen;
 
-    static readonly Color SelectedTextColor = new Color(1f, 0.95f, 0.62f);
-    static readonly Color NormalTextColor = new Color(0.62f, 0.66f, 0.74f);
-    static readonly Color SelectedBarColor = new Color(0.95f, 0.83f, 0.18f, 0.16f);
-    static readonly Color NormalBarColor = new Color(1f, 1f, 1f, 0f);
+    // GameManager draws the shared "press SPACE to launch" prompt for this.
+    public bool BallWaiting => isActiveAndEnabled && ball != null && ball.IsAttached;
 
-    int selected;
+    // How far past the frame edge the ball goes before it counts as out, so it
+    // leaves properly rather than blinking away on the boundary.
+    const float FrameMargin = 0.06f;
+
     int shownFrame;
-    Vector2 lastMousePosition;
+    bool chosen;
+    Vector3 paddleRest;
 
-    public void Show(int highScore)
+    void Awake()
     {
-        if (menuScreen != null) menuScreen.SetActive(true);
-        gameObject.SetActive(true);
-        highScoreText.text = highScore > 0 ? $"HIGH SCORE  {highScore}" : "";
-        Select(0);
+        // Where the paddle was authored: in the alley between the two slabs.
+        if (paddle != null) paddleRest = paddle.transform.localPosition;
     }
 
-    // Hides the options but keeps the 3D screen up: the menu's hall of fame
-    // view draws the records panel over the same backdrop.
-    public void HideOptions() => gameObject.SetActive(false);
-
-    public void Hide()
+    public void Show()
     {
-        if (menuScreen != null) menuScreen.SetActive(false);
-        gameObject.SetActive(false);
+        gameObject.SetActive(true);
+        chosen = false;
+        RestoreTitle();
+        if (playGroup != null) playGroup.SetActive(true);
+        if (paddle != null) paddle.transform.localPosition = paddleRest;
+        ResetBall();
+    }
+
+    // The menu's hall of fame view keeps the screen and the title but drops the
+    // playable half, so a stray bounce can't pick an option from behind the
+    // records panel.
+    public void HideOptions()
+    {
+        if (playGroup != null) playGroup.SetActive(false);
+    }
+
+    public void Hide() => gameObject.SetActive(false);
+
+    // Called by MenuOption when the ball reaches it. The first hit wins: the
+    // ball is still in play for the frames it takes GameManager to switch away.
+    public void OnOptionHit(MainMenuOption option)
+    {
+        if (chosen) return;
+        chosen = true;
+        OptionChosen?.Invoke(option);
     }
 
     void OnEnable()
     {
         // The key that brought us here (SPACE on an end screen) is still down
-        // this frame — don't let it activate an option as well.
+        // this frame — don't let it launch the ball as well.
         shownFrame = Time.frameCount;
-        lastMousePosition = MousePosition();
     }
 
     void Update()
     {
-        if (Time.frameCount == shownFrame) return;
+        if (Time.frameCount == shownFrame || ball == null || paddle == null) return;
 
-        var keyboard = Keyboard.current;
-        if (keyboard != null)
+        if (ball.IsAttached)
         {
-            if (keyboard.downArrowKey.wasPressedThisFrame || keyboard.sKey.wasPressedThisFrame)
-                Select(selected + 1);
-            if (keyboard.upArrowKey.wasPressedThisFrame || keyboard.wKey.wasPressedThisFrame)
-                Select(selected - 1);
+            var keyboard = Keyboard.current;
+            if (keyboard != null && keyboard.spaceKey.wasPressedThisFrame) ball.Launch();
+            return;
         }
 
-        bool activated = keyboard != null
-            && (keyboard.enterKey.wasPressedThisFrame
-                || keyboard.numpadEnterKey.wasPressedThisFrame
-                || keyboard.spaceKey.wasPressedThisFrame);
-
-        var mouse = Mouse.current;
-        if (mouse != null)
-        {
-            // Only a moved cursor takes the selection over from the keyboard,
-            // otherwise a cursor resting on an option would fight the arrows.
-            var position = MousePosition();
-            if ((position - lastMousePosition).sqrMagnitude > 1f)
-            {
-                lastMousePosition = position;
-                int hovered = OptionAt(position);
-                if (hovered >= 0) Select(hovered);
-            }
-
-            if (mouse.leftButton.wasPressedThisFrame)
-            {
-                int clicked = OptionAt(position);
-                if (clicked >= 0)
-                {
-                    Select(clicked);
-                    activated = true;
-                }
-            }
-        }
-
-        if (activated) OptionChosen?.Invoke((MainMenuOption)selected);
+        if (OutOfFrame(ball.transform.position)) ResetBall();
     }
 
-    void Select(int index)
+    void ResetBall()
     {
-        if (optionTexts == null || optionTexts.Length == 0) return;
-        selected = (index % optionTexts.Length + optionTexts.Length) % optionTexts.Length;
-
-        for (int i = 0; i < optionTexts.Length; i++)
-        {
-            bool active = i == selected;
-            if (optionTexts[i] != null)
-                optionTexts[i].color = active ? SelectedTextColor : NormalTextColor;
-            if (optionHighlights != null && i < optionHighlights.Length && optionHighlights[i] != null)
-                optionHighlights[i].color = active ? SelectedBarColor : NormalBarColor;
-        }
+        if (ball != null && paddle != null) ball.AttachTo(paddle.transform);
     }
 
-    // The index of the option row under a screen point, or -1. The canvas is a
-    // screen-space overlay, so the hit test needs no camera.
-    int OptionAt(Vector2 screenPosition)
+    // "Out of the field" is literally out of the camera's view, which holds on
+    // any aspect ratio — a hard-coded rectangle would strand the ball offscreen
+    // on a wide monitor and swallow it early on a narrow one.
+    static bool OutOfFrame(Vector3 position)
     {
-        if (optionHighlights == null) return -1;
-        for (int i = 0; i < optionHighlights.Length; i++)
-        {
-            if (optionHighlights[i] == null) continue;
-            if (RectTransformUtility.RectangleContainsScreenPoint(optionHighlights[i].rectTransform, screenPosition, null))
-                return i;
-        }
-        return -1;
+        var camera = Camera.main;
+        if (camera == null) return false;
+        var viewport = camera.WorldToViewportPoint(position);
+        return viewport.z < 0f
+            || viewport.x < -FrameMargin || viewport.x > 1f + FrameMargin
+            || viewport.y < -FrameMargin || viewport.y > 1f + FrameMargin;
     }
 
-    static Vector2 MousePosition() =>
-        Mouse.current != null ? Mouse.current.position.ReadValue() : Vector2.zero;
+    void RestoreTitle()
+    {
+        if (title == null) return;
+        foreach (Transform letter in title) letter.gameObject.SetActive(true);
+    }
 }
