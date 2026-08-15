@@ -5,9 +5,9 @@ public class GameManager : MonoBehaviour
 {
     public static GameManager Instance { get; private set; }
 
-    // True while the quit confirmation is up. Time is frozen behind it, but the
+    // True while the exit confirmation is up. Time is frozen behind it, but the
     // components that read the keyboard themselves have to hold off too.
-    public bool Paused => quitPrompt;
+    public bool Paused => exitPrompt;
 
     const string HighScoreKey = "Arkanoid.HighScore";
 
@@ -67,7 +67,7 @@ public class GameManager : MonoBehaviour
     string typedName = "";
     bool menuShowingRecords;
     int transitionFrame = -1;
-    bool quitPrompt;
+    bool exitPrompt;
     Texture2D dimTexture;
 
     void Awake()
@@ -86,12 +86,33 @@ public class GameManager : MonoBehaviour
     {
         transitionFrame = Time.frameCount;
         menuShowingRecords = false;
+        // Nothing of the round survives into the menu. 2D physics ignores Z, so
+        // a ball or a grid of bricks left behind the menu's backdrop would still
+        // be in the menu ball's way even though nothing of them can be seen.
+        ClearRound();
         // The score and lives readouts belong to a round in progress.
         if (scoreBoard != null) scoreBoard.SetVisible(false);
         SetPlayfieldActive(false);
         if (recordsPanel != null) recordsPanel.Hide();
         if (mainMenuPanel != null) mainMenuPanel.Show();
         state = State.Menu;
+    }
+
+    void ClearRound()
+    {
+        if (ball != null)
+        {
+            Destroy(ball.gameObject);
+            ball = null;
+        }
+        if (brickHolder != null)
+        {
+            Destroy(brickHolder.gameObject);
+            brickHolder = null;
+        }
+        bricksLeft = 0;
+        // A round abandoned mid-name-entry leaves this subscription behind.
+        if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
     }
 
     void OnMenuOptionChosen(MainMenuOption option)
@@ -223,24 +244,26 @@ public class GameManager : MonoBehaviour
         bool pressedSpace = keyboard != null && keyboard.spaceKey.wasPressedThisFrame;
         bool pressedEscape = keyboard != null && keyboard.escapeKey.wasPressedThisFrame;
 
-        // The quit confirmation swallows every other key while it is up, and
-        // the game is frozen behind it (see OpenQuitPrompt).
-        if (quitPrompt)
+        // The exit confirmation swallows every other key while it is up, and
+        // the game is frozen behind it (see OpenExitPrompt).
+        if (exitPrompt)
         {
             bool confirmed = keyboard != null
                 && (keyboard.yKey.wasPressedThisFrame
                     || keyboard.enterKey.wasPressedThisFrame
                     || keyboard.numpadEnterKey.wasPressedThisFrame);
-            if (confirmed) QuitGame();
-            else if (pressedEscape || (keyboard != null && keyboard.nKey.wasPressedThisFrame)) CloseQuitPrompt();
+            if (confirmed) ExitToMenu();
+            else if (pressedEscape || (keyboard != null && keyboard.nKey.wasPressedThisFrame)) CloseExitPrompt();
             return;
         }
 
-        // ESC asks to quit everywhere except the hall of fame, where it already
-        // means "back to the menu", and name entry, which ENTER submits.
-        if (pressedEscape && state != State.EnteringName && !(state == State.Menu && menuShowingRecords))
+        // ESC asks to abandon the round and go back to the menu. Only a round in
+        // progress is worth confirming: the menu has nothing to leave, name
+        // entry is a few keystrokes from being submitted with ENTER, and an end
+        // screen leaves on ESC as readily as on SPACE, with nothing to lose.
+        if (pressedEscape && (state == State.Ready || state == State.Playing))
         {
-            OpenQuitPrompt();
+            OpenExitPrompt();
             return;
         }
 
@@ -273,7 +296,7 @@ public class GameManager : MonoBehaviour
                 break;
             case State.GameOver:
             case State.Won:
-                if (pressedSpace) ShowMenu();
+                if (pressedSpace || pressedEscape) ShowMenu();
                 break;
         }
     }
@@ -281,26 +304,32 @@ public class GameManager : MonoBehaviour
     // The prompt freezes the game rather than overlaying a live one: a ball in
     // flight would otherwise go on being lost, and bricks broken, while the
     // player reads the question.
-    void OpenQuitPrompt()
+    void OpenExitPrompt()
     {
-        quitPrompt = true;
+        exitPrompt = true;
         Time.timeScale = 0f;
     }
 
-    void CloseQuitPrompt()
+    void CloseExitPrompt()
     {
-        quitPrompt = false;
+        exitPrompt = false;
         Time.timeScale = 1f;
     }
 
-    void QuitGame()
+    // Abandoning the round: the score goes with it, however good it was — the
+    // hall of fame is for rounds that were played out. SetScore has been
+    // pushing the running score into the stored high score all round, so that
+    // has to be wound back to what the round started with, or a walked-out-on
+    // score would still raise the bar the next round has to beat.
+    void ExitToMenu()
     {
-        Time.timeScale = 1f;
-#if UNITY_EDITOR
-        UnityEditor.EditorApplication.isPlaying = false;
-#else
-        Application.Quit();
-#endif
+        CloseExitPrompt();
+        if (highScore > previousRecord)
+        {
+            highScore = previousRecord;
+            PlayerPrefs.SetInt(HighScoreKey, highScore);
+        }
+        ShowMenu();
     }
 
     void OnBallLost()
@@ -389,9 +418,9 @@ public class GameManager : MonoBehaviour
 
     void OnGUI()
     {
-        if (quitPrompt)
+        if (exitPrompt)
         {
-            DrawQuitPrompt();
+            DrawExitPrompt();
             return;
         }
 
@@ -416,7 +445,7 @@ public class GameManager : MonoBehaviour
         GUI.Label(new Rect(0f, y, Screen.width, 120f), "Press SPACE to launch", banner);
     }
 
-    void DrawQuitPrompt()
+    void DrawExitPrompt()
     {
         // Dim whatever is frozen behind the question so the two lines read
         // against a bright playfield as well as against the menu. OnGUI runs
@@ -439,8 +468,9 @@ public class GameManager : MonoBehaviour
         var hint = new GUIStyle(question) { fontSize = 24, fontStyle = FontStyle.Normal };
         hint.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
 
-        GUI.Label(new Rect(0f, Screen.height / 2f - 70f, Screen.width, 60f), "Quit the game?", question);
+        GUI.Label(new Rect(0f, Screen.height / 2f - 70f, Screen.width, 60f),
+            "Leave the round for the menu?", question);
         GUI.Label(new Rect(0f, Screen.height / 2f + 5f, Screen.width, 40f),
-            "Y or ENTER — quit        N or ESC — keep playing", hint);
+            "Y or ENTER — main menu        N or ESC — keep playing", hint);
     }
 }
