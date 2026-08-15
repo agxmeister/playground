@@ -104,6 +104,30 @@ public static class BlockText
     public static Mesh BuildWordMesh(string name, string word, float cell, float depth, float uvScale) =>
         BuildMesh(name, WordCells(word), cell, depth, uvScale, Vector2.zero);
 
+    public static Mesh BuildLinesMesh(string name, string[] lines, float cell, float depth, float uvScale,
+        int gapRows) =>
+        BuildMesh(name, LinesCells(lines, gapRows), cell, depth, uvScale, Vector2.zero);
+
+    // Several lines stacked into one grid, each centred on the widest. Used for
+    // an option label too long to sit across its arrow in one line.
+    public static bool[,] LinesCells(string[] lines, int gapRows)
+    {
+        int columns = 0;
+        foreach (var line in lines) columns = Mathf.Max(columns, WordColumns(line));
+        var cells = new bool[lines.Length * GlyphHeight + (lines.Length - 1) * gapRows, columns];
+
+        for (int line = 0; line < lines.Length; line++)
+        {
+            var lineCells = WordCells(lines[line]);
+            int top = line * (GlyphHeight + gapRows);
+            int left = (columns - lineCells.GetLength(1)) / 2;
+            for (int row = 0; row < GlyphHeight; row++)
+                for (int column = 0; column < lineCells.GetLength(1); column++)
+                    cells[top + row, left + column] = lineCells[row, column];
+        }
+        return cells;
+    }
+
     // Solid 3D geometry for a grid of block-font cells, centered on the grid's
     // own box: every horizontal run of solid cells in a row becomes one box, so
     // a glyph is a handful of blocks rather than one per cell.
@@ -176,33 +200,83 @@ public static class BlockText
         return mesh;
     }
 
-    // The menu's options are arrows: a triangular prism pointing along X, flat
-    // side to the ball's approach. The 2D outline is the collider too (see
-    // ArrowOutline), so the ball reflects off the real slanted edges.
-    public static Vector2[] ArrowOutline(float width, float height, bool pointingRight)
+    // The menu's options are arrow banners: a body wide enough to carry the
+    // option's name, drawn out to a point at one end. The rounded 2D outline is
+    // the collider as well as the mesh, so the ball reflects off exactly the
+    // shape the player sees, corners included.
+    //
+    // The corners are listed counter-clockwise as the camera sees them, which
+    // both the rounding and BuildArrowMesh rely on to work out which way things
+    // face. `point` is how much of the width the pointed end takes.
+    public static Vector2[] ArrowOutline(float width, float height, float point, float cornerRadius,
+        int cornerSegments, bool pointingRight)
     {
-        float tip = pointingRight ? width / 2f : -width / 2f;
-        float back = -tip;
-        // Listed counter-clockwise as the camera sees it, which BuildArrowMesh
-        // relies on to work out which way each face looks.
-        return pointingRight
-            ? new[]
-            {
-                new Vector2(back, -height / 2f),
-                new Vector2(tip, 0f),
-                new Vector2(back, height / 2f),
-            }
-            : new[]
-            {
-                new Vector2(tip, 0f),
-                new Vector2(back, -height / 2f),
-                new Vector2(back, height / 2f),
-            };
+        float halfWidth = width / 2f, halfHeight = height / 2f;
+        float notch = halfWidth - point;
+        var corners = new[]
+        {
+            new Vector2(-halfWidth, -halfHeight),
+            new Vector2(notch, -halfHeight),
+            new Vector2(halfWidth, 0f),
+            new Vector2(notch, halfHeight),
+            new Vector2(-halfWidth, halfHeight),
+        };
+        // Mirrored about X for a left-pointing arrow, which reverses the
+        // winding, so the order is reversed to keep it counter-clockwise.
+        if (!pointingRight)
+        {
+            for (int i = 0; i < corners.Length; i++) corners[i].x = -corners[i].x;
+            System.Array.Reverse(corners);
+        }
+        return RoundedOutline(corners, cornerRadius, cornerSegments);
     }
 
-    public static Mesh BuildArrowMesh(string name, float width, float height, float depth, bool pointingRight)
+    // Each corner of a counter-clockwise polygon replaced by an arc of the
+    // given radius, tangent to both of its edges. The radius is trimmed where
+    // an edge is too short to give it room — the arrow's point is a sharp angle
+    // that would otherwise swallow half the shape.
+    static Vector2[] RoundedOutline(Vector2[] corners, float radius, int segments)
     {
-        var outline = ArrowOutline(width, height, pointingRight);
+        var outline = new List<Vector2>();
+        int count = corners.Length;
+        for (int i = 0; i < count; i++)
+        {
+            var previous = corners[(i + count - 1) % count];
+            var corner = corners[i];
+            var next = corners[(i + 1) % count];
+
+            var toPrevious = (previous - corner).normalized;
+            var toNext = (next - corner).normalized;
+            float half = Vector2.Angle(toPrevious, toNext) * Mathf.Deg2Rad / 2f;
+            if (half <= 0.001f || half >= Mathf.PI / 2f - 0.001f)
+            {
+                outline.Add(corner);
+                continue;
+            }
+
+            // How far back along each edge the arc has to start, capped at half
+            // the shorter edge so neighbouring corners can't overrun each other.
+            float inset = Mathf.Min(radius / Mathf.Tan(half),
+                (previous - corner).magnitude / 2f, (next - corner).magnitude / 2f);
+            float arcRadius = inset * Mathf.Tan(half);
+            var centre = corner + (toPrevious + toNext).normalized * (arcRadius / Mathf.Sin(half));
+            var from = corner + toPrevious * inset;
+            var to = corner + toNext * inset;
+
+            float start = Mathf.Atan2(from.y - centre.y, from.x - centre.x);
+            float sweep = Mathf.DeltaAngle(start * Mathf.Rad2Deg,
+                Mathf.Atan2(to.y - centre.y, to.x - centre.x) * Mathf.Rad2Deg) * Mathf.Deg2Rad;
+            for (int s = 0; s <= segments; s++)
+            {
+                float angle = start + sweep * s / segments;
+                outline.Add(centre + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * arcRadius);
+            }
+        }
+        return outline.ToArray();
+    }
+
+    public static Mesh BuildArrowMesh(string name, Vector2[] outline, float depth)
+    {
         float halfDepth = depth / 2f;
 
         var mesh = new Mesh { name = name };
@@ -230,8 +304,18 @@ public static class BlockText
         Vector3 Front(Vector2 p) => new Vector3(p.x, p.y, -halfDepth);
         Vector3 Back(Vector2 p) => new Vector3(p.x, p.y, halfDepth);
 
-        Triangle(Front(outline[0]), Front(outline[1]), Front(outline[2]), Vector3.back);
-        Triangle(Back(outline[0]), Back(outline[1]), Back(outline[2]), Vector3.forward);
+        // The outline is convex, so both flat faces fan out from its centre.
+        var centre = Vector2.zero;
+        foreach (var p in outline) centre += p;
+        centre /= outline.Length;
+
+        for (int i = 0; i < outline.Length; i++)
+        {
+            var p = outline[i];
+            var q = outline[(i + 1) % outline.Length];
+            Triangle(Front(centre), Front(p), Front(q), Vector3.back);
+            Triangle(Back(centre), Back(p), Back(q), Vector3.forward);
+        }
 
         for (int i = 0; i < outline.Length; i++)
         {

@@ -59,6 +59,18 @@ public class MainMenuPanel : MonoBehaviour
     // enough not to be waited on.
     const float SlideDuration = 0.6f;
 
+    // How close to the frame edge an option arrow may sit once it has been
+    // pulled in to fit.
+    const float OptionEdgeMargin = 0.15f;
+
+    // Where each option arrow was authored, which is the layout for a 16:9
+    // frame — the widest the arrows are ever placed.
+    readonly System.Collections.Generic.Dictionary<Transform, float> authoredOptionX =
+        new System.Collections.Generic.Dictionary<Transform, float>();
+    // The frame the arrows were last fitted to, so a window resized while the
+    // menu is up doesn't leave them where the old one wanted them.
+    Vector2Int fittedTo;
+
     int shownFrame;
     // True from the hit that picks an option until the screen has finished
     // changing. Nothing else in the menu answers while it is set.
@@ -70,6 +82,36 @@ public class MainMenuPanel : MonoBehaviour
     {
         // Where the paddle was authored: under the middle of the screen.
         if (paddle != null) paddleRest = paddle.transform.localPosition;
+        if (slider != null)
+            foreach (var option in slider.GetComponentsInChildren<MenuOption>(true))
+                authoredOptionX[option.transform] = option.transform.localPosition.x;
+    }
+
+    // The layout runs the full width of a 16:9 frame, which is wider than the
+    // screen may actually be. Rather than authoring for the narrowest screen
+    // anyone might play on and leaving a 16:9 one half empty, the arrows are
+    // pulled in from the edges to whatever frame they find themselves in.
+    void FitOptionsToFrame()
+    {
+        var camera = Camera.main;
+        if (camera == null) return;
+        fittedTo = new Vector2Int(Screen.width, Screen.height);
+
+        foreach (var pair in authoredOptionX)
+        {
+            var option = pair.Key;
+            if (option == null) continue;
+            var renderer = option.GetComponent<Renderer>();
+            if (renderer == null) continue;
+
+            float depth = option.position.z - camera.transform.position.z;
+            float frameHalfWidth = camera.ViewportToWorldPoint(new Vector3(1f, 0.5f, depth)).x
+                - camera.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, depth)).x;
+            float limit = frameHalfWidth - renderer.bounds.extents.x - OptionEdgeMargin;
+
+            float x = Mathf.Sign(pair.Value) * Mathf.Min(Mathf.Abs(pair.Value), limit);
+            option.localPosition = new Vector3(x, option.localPosition.y, option.localPosition.z);
+        }
     }
 
     public void Show()
@@ -82,6 +124,7 @@ public class MainMenuPanel : MonoBehaviour
         RestoreTitle();
         if (playGroup != null) playGroup.SetActive(true);
         RestoreOptions();
+        FitOptionsToFrame();
         if (paddle != null) paddle.transform.localPosition = paddleRest;
         ResetBall();
     }
@@ -177,6 +220,8 @@ public class MainMenuPanel : MonoBehaviour
         // The exit confirmation freezes time, but SPACE would still be read
         // here and launch the ball behind the prompt.
         if (GameManager.Instance != null && GameManager.Instance.Paused) return;
+
+        if (fittedTo.x != Screen.width || fittedTo.y != Screen.height) FitOptionsToFrame();
 
         if (ball.IsAttached)
         {

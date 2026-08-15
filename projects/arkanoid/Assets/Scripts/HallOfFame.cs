@@ -27,8 +27,8 @@ public class HallOfFame : MonoBehaviour
     // different font from its score. The width is what the plaque has between
     // the two arrows; the cell cap is what keeps a three-letter name from
     // being blown up to twice the height of the title.
-    const float MaxCell = 0.2f;
-    const float MaxWidth = 7f;
+    const float MaxCell = 0.25f;
+    const float MaxWidth = 9f;
     const float LineDepth = 0.35f;
     const float LineUvScale = 2f;
 
