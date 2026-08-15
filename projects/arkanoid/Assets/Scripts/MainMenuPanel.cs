@@ -112,6 +112,9 @@ public class MainMenuPanel : MonoBehaviour
         // Once an option is picked the menu only has to look right until it is
         // switched away — the ball is nobody's input any more.
         if (chosen || Time.frameCount == shownFrame || ball == null || paddle == null) return;
+        // The quit confirmation freezes time, but SPACE would still be read
+        // here and launch the ball behind the prompt.
+        if (GameManager.Instance != null && GameManager.Instance.Paused) return;
 
         if (ball.IsAttached)
         {

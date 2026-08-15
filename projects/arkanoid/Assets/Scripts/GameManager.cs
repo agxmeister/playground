@@ -5,6 +5,10 @@ public class GameManager : MonoBehaviour
 {
     public static GameManager Instance { get; private set; }
 
+    // True while the quit confirmation is up. Time is frozen behind it, but the
+    // components that read the keyboard themselves have to hold off too.
+    public bool Paused => quitPrompt;
+
     const string HighScoreKey = "Arkanoid.HighScore";
 
     [SerializeField] Ball ballPrefab;
@@ -63,6 +67,8 @@ public class GameManager : MonoBehaviour
     string typedName = "";
     bool menuShowingRecords;
     int transitionFrame = -1;
+    bool quitPrompt;
+    Texture2D dimTexture;
 
     void Awake()
     {
@@ -215,6 +221,28 @@ public class GameManager : MonoBehaviour
 
         var keyboard = Keyboard.current;
         bool pressedSpace = keyboard != null && keyboard.spaceKey.wasPressedThisFrame;
+        bool pressedEscape = keyboard != null && keyboard.escapeKey.wasPressedThisFrame;
+
+        // The quit confirmation swallows every other key while it is up, and
+        // the game is frozen behind it (see OpenQuitPrompt).
+        if (quitPrompt)
+        {
+            bool confirmed = keyboard != null
+                && (keyboard.yKey.wasPressedThisFrame
+                    || keyboard.enterKey.wasPressedThisFrame
+                    || keyboard.numpadEnterKey.wasPressedThisFrame);
+            if (confirmed) QuitGame();
+            else if (pressedEscape || (keyboard != null && keyboard.nKey.wasPressedThisFrame)) CloseQuitPrompt();
+            return;
+        }
+
+        // ESC asks to quit everywhere except the hall of fame, where it already
+        // means "back to the menu", and name entry, which ENTER submits.
+        if (pressedEscape && state != State.EnteringName && !(state == State.Menu && menuShowingRecords))
+        {
+            OpenQuitPrompt();
+            return;
+        }
 
         switch (state)
         {
@@ -248,6 +276,31 @@ public class GameManager : MonoBehaviour
                 if (pressedSpace) ShowMenu();
                 break;
         }
+    }
+
+    // The prompt freezes the game rather than overlaying a live one: a ball in
+    // flight would otherwise go on being lost, and bricks broken, while the
+    // player reads the question.
+    void OpenQuitPrompt()
+    {
+        quitPrompt = true;
+        Time.timeScale = 0f;
+    }
+
+    void CloseQuitPrompt()
+    {
+        quitPrompt = false;
+        Time.timeScale = 1f;
+    }
+
+    void QuitGame()
+    {
+        Time.timeScale = 1f;
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
     }
 
     void OnBallLost()
@@ -327,12 +380,21 @@ public class GameManager : MonoBehaviour
 
     void OnDestroy()
     {
+        // The prompt freezes time, and timeScale outlives this component.
+        Time.timeScale = 1f;
+        if (dimTexture != null) Destroy(dimTexture);
         if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
         if (mainMenuPanel != null) mainMenuPanel.OptionChosen -= OnMenuOptionChosen;
     }
 
     void OnGUI()
     {
+        if (quitPrompt)
+        {
+            DrawQuitPrompt();
+            return;
+        }
+
         // The same prompt serves the round and the menu: both sit a ball on a
         // paddle and wait for SPACE, and on the menu it is the one thing that
         // isn't self-evident about aiming at an option.
@@ -352,5 +414,33 @@ public class GameManager : MonoBehaviour
         // the middle of the screen is where the option slabs are.
         float y = state == State.Ready ? Screen.height / 2f - 60f : Screen.height * 0.72f;
         GUI.Label(new Rect(0f, y, Screen.width, 120f), "Press SPACE to launch", banner);
+    }
+
+    void DrawQuitPrompt()
+    {
+        // Dim whatever is frozen behind the question so the two lines read
+        // against a bright playfield as well as against the menu. OnGUI runs
+        // several times a frame, so the one-pixel texture is built once.
+        if (dimTexture == null)
+        {
+            dimTexture = new Texture2D(1, 1) { hideFlags = HideFlags.HideAndDontSave };
+            dimTexture.SetPixel(0, 0, new Color(0f, 0f, 0f, 0.7f));
+            dimTexture.Apply();
+        }
+        GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), dimTexture);
+
+        var question = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 40,
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleCenter,
+        };
+        question.normal.textColor = Color.white;
+        var hint = new GUIStyle(question) { fontSize = 24, fontStyle = FontStyle.Normal };
+        hint.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
+
+        GUI.Label(new Rect(0f, Screen.height / 2f - 70f, Screen.width, 60f), "Quit the game?", question);
+        GUI.Label(new Rect(0f, Screen.height / 2f + 5f, Screen.width, 40f),
+            "Y or ENTER — quit        N or ESC — keep playing", hint);
     }
 }
