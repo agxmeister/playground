@@ -21,10 +21,13 @@ public class Debris : MonoBehaviour
     float age;
     Vector3 baseScale;
 
-    public static void Spawn(Vector3 origin, Vector3 brickSize, Color color, Material material)
+    // `amount` scales the fragment count for casters bigger than a brick — a
+    // menu slab four bricks wide would otherwise break into the same handful of
+    // chunks and read as too sparse for its size.
+    public static void Spawn(Vector3 origin, Vector3 brickSize, Color color, Material material, float amount = 1f)
     {
         colorBlock ??= new MaterialPropertyBlock();
-        int count = Random.Range(6, 10);
+        int count = Mathf.Max(1, Mathf.RoundToInt(Random.Range(6, 10) * amount));
         for (int i = 0; i < count; i++)
         {
             var fragment = new GameObject("Debris");
@@ -61,6 +64,16 @@ public class Debris : MonoBehaviour
             debris.life = Random.Range(1.2f, 2f);
             debris.baseScale = fragment.transform.localScale;
         }
+    }
+
+    // Sweeps away every fragment still in the air. Fragments are unparented
+    // root objects that outlive whatever spawned them, so a screen change has
+    // to clear them by hand or the last screen's rubble rains over the next
+    // one. Called at transitions only, which is why the scene scan is fine.
+    public static void ClearAll()
+    {
+        foreach (var fragment in FindObjectsByType<Debris>(FindObjectsSortMode.None))
+            Destroy(fragment.gameObject);
     }
 
     // The stock cube mesh isn't loadable by name at runtime, so it is lifted
