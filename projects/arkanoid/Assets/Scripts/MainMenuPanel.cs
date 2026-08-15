@@ -2,18 +2,24 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-public enum MainMenuOption { StartGame, HallOfFame }
+public enum MainMenuOption { StartGame, HallOfFame, NextChampion, BackToMenu }
 
 // The title screen — a small playable scene rather than a UI panel. The
 // component sits on the MenuScreen root itself (see "The main menu screen" in
 // CLAUDE.md), so showing and hiding the menu is just switching that subtree on
 // and off, and everything in it is real geometry the ball can hit: the
-// ARKANOID letters, the two option slabs, the paddle.
+// ARKANOID letters and the option arrows.
 //
 // Picking an option means aiming: the ball waits on the paddle, the player
-// slides the paddle under the option they want and launches with SPACE, just
-// as they would launch a round. The two slabs leave an alley between them that
-// the paddle rests in, so a launch straight up picks nothing.
+// slides the paddle under the arrow they want and launches with SPACE, just as
+// they would launch a round. The two arrows sit either side of the word, so a
+// launch straight up picks nothing.
+//
+// The menu is two screens side by side inside MenuSlider — the title board and
+// the hall of fame a screen's width to its right — and choosing the hall of
+// fame slides the board off to the left rather than cutting to another view.
+// The paddle and ball are outside the slider, so they stay put while the world
+// behind them moves.
 //
 // There is deliberately no wall around the menu — the field is unlimited, and
 // a ball that leaves the camera's frame materialises back on the paddle
@@ -21,16 +27,24 @@ public enum MainMenuOption { StartGame, HallOfFame }
 public class MainMenuPanel : MonoBehaviour
 {
     [SerializeField] GameObject playGroup;
+    [SerializeField] Transform slider;
     [SerializeField] Transform title;
+    [SerializeField] HallOfFame hall;
     [SerializeField] Paddle paddle;
     [SerializeField] Ball ball;
 
+    // Only ever raised for StartGame: the hall of fame and the way back from it
+    // are the menu's own business now that it is a screen rather than a panel.
     public event System.Action<MainMenuOption> OptionChosen;
 
-    // GameManager draws the shared "press SPACE to launch" prompt for this. Once
-    // an option has been picked the menu is on its way out, so no prompt even if
-    // the ball wanders offscreen and re-attaches while the rubble falls.
-    public bool BallWaiting => isActiveAndEnabled && !chosen && ball != null && ball.IsAttached;
+    // How far apart the two screens sit inside the slider — comfortably more
+    // than the camera's frame is wide, so neither shows a corner of the other.
+    public const float ScreenSpacing = 20f;
+
+    // GameManager draws the shared "press SPACE to launch" prompt for this.
+    // While a choice is being carried out the menu is mid-change, so no prompt
+    // even though the ball is sitting back on the paddle.
+    public bool BallWaiting => isActiveAndEnabled && !busy && ball != null && ball.IsAttached;
 
     // How far past the frame edge the ball goes before it counts as out, so it
     // leaves properly rather than blinking away on the boundary.
@@ -41,33 +55,35 @@ public class MainMenuPanel : MonoBehaviour
     // fall without leaving the player waiting on an empty menu.
     const float ShatterPause = 0.9f;
 
+    // The slide between the two screens. Long enough to read as travel, short
+    // enough not to be waited on.
+    const float SlideDuration = 0.6f;
+
     int shownFrame;
-    bool chosen;
+    // True from the hit that picks an option until the screen has finished
+    // changing. Nothing else in the menu answers while it is set.
+    bool busy;
+    bool showingHall;
     Vector3 paddleRest;
 
     void Awake()
     {
-        // Where the paddle was authored: in the alley between the two slabs.
+        // Where the paddle was authored: under the middle of the screen.
         if (paddle != null) paddleRest = paddle.transform.localPosition;
     }
 
     public void Show()
     {
         gameObject.SetActive(true);
-        chosen = false;
+        busy = false;
+        showingHall = false;
+        if (slider != null) slider.localPosition = Vector3.zero;
+        if (hall != null) hall.Reload();
         RestoreTitle();
         if (playGroup != null) playGroup.SetActive(true);
         RestoreOptions();
         if (paddle != null) paddle.transform.localPosition = paddleRest;
         ResetBall();
-    }
-
-    // The menu's hall of fame view keeps the screen and the title but drops the
-    // playable half, so a stray bounce can't pick an option from behind the
-    // records panel.
-    public void HideOptions()
-    {
-        if (playGroup != null) playGroup.SetActive(false);
     }
 
     // The menu's rubble is made of unparented objects, so it would go on
@@ -79,25 +95,71 @@ public class MainMenuPanel : MonoBehaviour
     }
 
     // Called by MenuOption when the ball reaches it; the return value says
-    // whether this is the hit that counted, and so whether the slab should
+    // whether this is the hit that counted, and so whether the arrow should
     // shatter. The first hit wins — the ball stays live through the pause and
-    // the frames it then takes GameManager to switch away, and it must not be
-    // able to pick the other option on the way.
+    // the frames a screen change then takes, and it must not be able to pick a
+    // second option on the way.
     public bool OnOptionHit(MainMenuOption option)
     {
-        if (chosen) return false;
-        chosen = true;
-        StartCoroutine(AnnounceChoice(option));
+        if (busy) return false;
+        // An arrow belonging to the screen that isn't up can't be picked. Both
+        // screens live in the scene at once, and only the slide separates them.
+        if (showingHall != (option == MainMenuOption.NextChampion || option == MainMenuOption.BackToMenu))
+            return false;
+        busy = true;
+        StartCoroutine(CarryOut(option));
         return true;
     }
 
-    // The pause is the point: the option breaks apart and its pieces fall
-    // before the screen it leads to comes up, so the hit reads as a hit rather
-    // than as an instant cut.
-    IEnumerator AnnounceChoice(MainMenuOption option)
+    // The pause is the point: the arrow breaks apart and its pieces fall before
+    // the screen it leads to comes up, so the hit reads as a hit rather than as
+    // an instant cut.
+    IEnumerator CarryOut(MainMenuOption option)
     {
         yield return new WaitForSeconds(ShatterPause);
-        OptionChosen?.Invoke(option);
+
+        // Starting a game hands the screen over to GameManager, and this menu
+        // is switched off wholesale — nothing to put back.
+        if (option == MainMenuOption.StartGame)
+        {
+            OptionChosen?.Invoke(option);
+            yield break;
+        }
+
+        switch (option)
+        {
+            case MainMenuOption.HallOfFame:
+                yield return SlideTo(true);
+                break;
+            case MainMenuOption.BackToMenu:
+                yield return SlideTo(false);
+                break;
+            case MainMenuOption.NextChampion:
+                if (hall != null) hall.Next();
+                break;
+        }
+
+        // The arrow that was just hit is put back, exactly like the title
+        // letters, and the ball is served again — the screen has moved out from
+        // under it, and a fresh serve is how every other choice starts.
+        RestoreOptions();
+        ResetBall();
+        busy = false;
+    }
+
+    IEnumerator SlideTo(bool toHall)
+    {
+        showingHall = toHall;
+        if (slider == null) yield break;
+        float from = slider.localPosition.x;
+        float to = toHall ? -ScreenSpacing : 0f;
+        for (float t = 0f; t < SlideDuration; t += Time.deltaTime)
+        {
+            slider.localPosition = new Vector3(
+                Mathf.SmoothStep(from, to, t / SlideDuration), 0f, 0f);
+            yield return null;
+        }
+        slider.localPosition = new Vector3(to, 0f, 0f);
     }
 
     void OnEnable()
@@ -109,10 +171,10 @@ public class MainMenuPanel : MonoBehaviour
 
     void Update()
     {
-        // Once an option is picked the menu only has to look right until it is
-        // switched away — the ball is nobody's input any more.
-        if (chosen || Time.frameCount == shownFrame || ball == null || paddle == null) return;
-        // The quit confirmation freezes time, but SPACE would still be read
+        // While a choice is being carried out the menu only has to look right —
+        // the ball is nobody's input any more.
+        if (busy || Time.frameCount == shownFrame || ball == null || paddle == null) return;
+        // The exit confirmation freezes time, but SPACE would still be read
         // here and launch the ball behind the prompt.
         if (GameManager.Instance != null && GameManager.Instance.Paused) return;
 
@@ -150,13 +212,17 @@ public class MainMenuPanel : MonoBehaviour
         foreach (Transform letter in title) letter.gameObject.SetActive(true);
     }
 
-    // The slab the player picked last time shattered itself off; put both back
-    // so the menu always opens whole. Searched with inactive objects included,
-    // since a shattered slab is exactly the object that is switched off.
+    // The arrow the player picked shattered itself off; put every option on
+    // both screens back. Searched with inactive objects included, since a
+    // shattered arrow is exactly the object that is switched off.
     void RestoreOptions()
     {
-        if (playGroup == null) return;
-        foreach (var option in playGroup.GetComponentsInChildren<MenuOption>(true))
+        if (slider == null) return;
+        foreach (var option in slider.GetComponentsInChildren<MenuOption>(true))
             option.gameObject.SetActive(true);
+        // ...except the one the hall of fame itself hides when there is no
+        // second champion to advance to. Its own state is left alone: the
+        // champion just advanced to must not be reset back to the first.
+        if (hall != null) hall.RefreshOptions();
     }
 }

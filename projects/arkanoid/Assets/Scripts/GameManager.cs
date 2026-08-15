@@ -65,7 +65,6 @@ public class GameManager : MonoBehaviour
     int lives;
     int bricksLeft;
     string typedName = "";
-    bool menuShowingRecords;
     int transitionFrame = -1;
     bool exitPrompt;
     Texture2D dimTexture;
@@ -85,7 +84,6 @@ public class GameManager : MonoBehaviour
     void ShowMenu()
     {
         transitionFrame = Time.frameCount;
-        menuShowingRecords = false;
         // Nothing of the round survives into the menu. 2D physics ignores Z, so
         // a ball or a grid of bricks left behind the menu's backdrop would still
         // be in the menu ball's way even though nothing of them can be seen.
@@ -115,22 +113,12 @@ public class GameManager : MonoBehaviour
         if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
     }
 
+    // Only StartGame ever reaches here: the menu's hall of fame is a screen of
+    // its own inside the menu, which slides to it and back without this.
     void OnMenuOptionChosen(MainMenuOption option)
     {
-        if (state != State.Menu || menuShowingRecords) return;
-
-        if (option == MainMenuOption.StartGame)
-        {
-            NewGame();
-            return;
-        }
-
-        transitionFrame = Time.frameCount;
-        menuShowingRecords = true;
-        // Only the options go away — the 3D menu screen stays up behind the
-        // records panel.
-        if (mainMenuPanel != null) mainMenuPanel.HideOptions();
-        if (recordsPanel != null) recordsPanel.ShowRecords(RecordBook.Load(), "ESC — back to menu");
+        if (state != State.Menu || option != MainMenuOption.StartGame) return;
+        NewGame();
     }
 
     void NewGame()
@@ -270,14 +258,9 @@ public class GameManager : MonoBehaviour
         switch (state)
         {
             case State.Menu:
-                // The menu's own options are driven by MainMenuPanel; only the
-                // way back from its hall of fame view is handled here.
-                if (menuShowingRecords)
-                {
-                    bool pressedBack = pressedSpace || (keyboard != null
-                        && (keyboard.escapeKey.wasPressedThisFrame || keyboard.enterKey.wasPressedThisFrame));
-                    if (pressedBack) ShowMenu();
-                }
+                // The menu drives itself entirely, hall of fame included —
+                // there is no keyboard path into it but SPACE to launch, which
+                // MainMenuPanel reads for itself.
                 break;
             case State.Ready:
                 if (pressedSpace)
@@ -428,8 +411,7 @@ public class GameManager : MonoBehaviour
         // paddle and wait for SPACE, and on the menu it is the one thing that
         // isn't self-evident about aiming at an option.
         bool waiting = state == State.Ready
-            || (state == State.Menu && !menuShowingRecords
-                && mainMenuPanel != null && mainMenuPanel.BallWaiting);
+            || (state == State.Menu && mainMenuPanel != null && mainMenuPanel.BallWaiting);
         if (!waiting) return;
 
         var banner = new GUIStyle(GUI.skin.label)
