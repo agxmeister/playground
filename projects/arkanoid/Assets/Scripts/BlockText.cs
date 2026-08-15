@@ -101,9 +101,6 @@ public static class BlockText
         + index * (GlyphWidth + 1) * cell
         + GlyphWidth * cell / 2f;
 
-    public static Mesh BuildWordMesh(string name, string word, float cell, float depth, float uvScale) =>
-        BuildMesh(name, WordCells(word), cell, depth, uvScale, Vector2.zero);
-
     public static Mesh BuildLinesMesh(string name, string[] lines, float cell, float depth, float uvScale,
         int gapRows) =>
         BuildMesh(name, LinesCells(lines, gapRows), cell, depth, uvScale, Vector2.zero);

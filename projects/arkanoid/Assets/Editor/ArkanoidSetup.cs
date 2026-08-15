@@ -1822,8 +1822,10 @@ public static class ArkanoidSetup
         hallSo.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    // A line of the plaque: geometry only, and no collider — the plaque is read
-    // rather than hit, and it is the arrows that drive the screen.
+    // A line of the plaque: empty here, since the champion is only known at
+    // runtime. HallOfFame hangs one hittable block per symbol off it and takes
+    // the material for them from this renderer, so the line object itself is the
+    // anchor and the look of the line rather than a mesh of its own.
     static MeshFilter CreateChampionLine(Transform parent, string name, float y, Material material)
     {
         var go = new GameObject(name);

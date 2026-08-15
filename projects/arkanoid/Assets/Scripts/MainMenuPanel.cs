@@ -185,8 +185,11 @@ public class MainMenuPanel : MonoBehaviour
 
         // The arrow that was just hit is put back, exactly like the title
         // letters, and the ball is served again — the screen has moved out from
-        // under it, and a fresh serve is how every other choice starts.
+        // under it, and a fresh serve is how every other choice starts. The
+        // plaque's symbols go back with it: they are hittable too, and a
+        // champion arrived at with half their name missing can't be read.
         RestoreOptions();
+        if (hall != null) hall.RestoreSymbols();
         ResetBall();
         busy = false;
     }

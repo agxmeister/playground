@@ -1,12 +1,14 @@
 using UnityEngine;
 
-// One letter of the ARKANOID title. A hit knocks the whole letter out in a
-// shower of the same debris a brick throws, so the word can be taken apart a
-// letter at a time while the player is deciding what to pick.
+// One block of the menu's lettering: a letter of the ARKANOID title, or a
+// symbol of a champion's name or score on the hall of fame. A hit knocks the
+// whole block out in a shower of the same debris a brick throws, so the words
+// can be taken apart a symbol at a time while the player is deciding what to
+// pick.
 //
-// The letter is only switched off, never destroyed: MainMenuPanel puts the
-// word back together every time the menu opens, so breaking it is a toy rather
-// than a permanent edit to the scene.
+// The block is only switched off, never destroyed: MainMenuPanel puts the title
+// back together every time the menu opens and the plaque's symbols back after
+// every choice, so breaking them is a toy rather than a permanent edit.
 [RequireComponent(typeof(Collider2D))]
 public class MenuTitleBlock : MonoBehaviour
 {
