@@ -59,9 +59,10 @@ public class MainMenuPanel : MonoBehaviour
     // enough not to be waited on.
     const float SlideDuration = 0.6f;
 
-    // How close to the frame edge an option arrow may sit once it has been
-    // pulled in to fit.
-    const float OptionEdgeMargin = 0.15f;
+    // The gap an option arrow keeps from the frame edge once it has been pulled
+    // in to fit — the same gap the 16:9 layout leaves it, so a narrower screen
+    // looks like the same design rather than a squeezed one.
+    const float OptionEdgeMargin = 0.55f;
 
     // Where each option arrow was authored, which is the layout for a 16:9
     // frame — the widest the arrows are ever placed.
