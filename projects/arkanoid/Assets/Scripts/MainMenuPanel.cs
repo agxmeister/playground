@@ -50,9 +50,10 @@ public class MainMenuPanel : MonoBehaviour
     public const float ScreenSpacing = 20f;
 
     // GameManager draws the shared "press SPACE to launch" prompt for this.
-    // While a choice is being carried out the menu is mid-change, so no prompt
-    // even though the ball is sitting back on the paddle.
-    public bool BallWaiting => isActiveAndEnabled && !busy && ball != null && ball.IsAttached;
+    // A screen change is no longer a reason to hold it back: the rally carries
+    // on across the change, so a ball on the paddle mid-change is one that fell
+    // past it and is waiting to be served again like any other.
+    public bool BallWaiting => isActiveAndEnabled && ball != null && ball.IsAttached;
 
     // How far past the frame edge the ball goes before it counts as out, so it
     // leaves properly rather than blinking away on the boundary.
@@ -173,11 +174,12 @@ public class MainMenuPanel : MonoBehaviour
         Ricochet.ClearAll();
     }
 
-    // Called by MenuOption when the ball reaches it; the return value says
-    // whether this is the hit that counted, and so whether the arrow should
-    // shatter. The first hit wins — the ball stays live through the pause and
-    // the frames a screen change then takes, and it must not be able to pick a
-    // second option on the way.
+    // Called by MenuOption when the ball reaches it, and answering false is
+    // what keeps the arrow standing. The first hit wins — the ball stays live
+    // through the pause and the frames a screen change then takes, and it must
+    // not be able to pick a second option on the way — and a refused arrow has
+    // to survive the hit, since the only mending it would get is on the way in
+    // to a board it is already standing on.
     public bool OnOptionHit(MainMenuOption option)
     {
         if (busy) return false;
@@ -205,12 +207,21 @@ public class MainMenuPanel : MonoBehaviour
             yield break;
         }
 
+        // A board is mended on the way *in*, before it sets off, which is the
+        // one moment nobody is looking at it: it arrives whole and ready to be
+        // read, and the board being left behind keeps whatever the ball did to
+        // it until it is the one arriving. Nothing is mended once the movement
+        // has started — see below.
         switch (option)
         {
             case MainMenuOption.HallOfFame:
+                RestoreBoard(hall != null ? hall.transform : null);
                 yield return SlideTo(true);
                 break;
             case MainMenuOption.BackToMenu:
+                // The word's parent is the board: the two arrows stand beside
+                // it there, and they are mended with it.
+                RestoreBoard(title != null ? title.parent : null);
                 yield return SlideTo(false);
                 break;
             case MainMenuOption.NextChampion:
@@ -222,14 +233,18 @@ public class MainMenuPanel : MonoBehaviour
                 break;
         }
 
-        // The arrow that was just hit is put back, exactly like the title
-        // letters, and the ball is served again — the screen has moved out from
-        // under it, and a fresh serve is how every other choice starts. The
-        // plaque's symbols go back with it: they are hittable too, and a
-        // champion arrived at with half their name missing can't be read.
-        RestoreOptions();
-        if (hall != null) hall.RestoreSymbols();
-        ResetBall();
+        // Only the arrow that was hit is put back, because the screen needs it
+        // to be picked again. Everything else the ball broke on the way stays
+        // broken: the boards keep moving with the ball still in play, so the
+        // player watches these hits land, and mending them the instant the
+        // movement stops reads as the game quietly undoing them. Damage done
+        // before a board sets off is a different matter — that board is mended
+        // on the way in, above, out of sight.
+        //
+        // The ball is left alone too — it has been playing on through the
+        // change, and catching it to serve it again would be the one part of
+        // the menu that stops for a screen.
+        RestoreOption(option);
         busy = false;
     }
 
@@ -259,9 +274,11 @@ public class MainMenuPanel : MonoBehaviour
 
     void Update()
     {
-        // While a choice is being carried out the menu only has to look right —
-        // the ball is nobody's input any more.
-        if (busy || Time.frameCount == shownFrame || ball == null || paddle == null) return;
+        // A choice being carried out no longer stops any of this: the ball plays
+        // on through the change, and it still has to be caught when it falls out
+        // of the frame and served again when it does. What a choice does hold
+        // off is another choice, which OnOptionHit refuses while busy.
+        if (Time.frameCount == shownFrame || ball == null || paddle == null) return;
         // The exit confirmation freezes time, but SPACE would still be read
         // here and launch the ball behind the prompt.
         if (GameManager.Instance != null && GameManager.Instance.Paused) return;
@@ -305,9 +322,37 @@ public class MainMenuPanel : MonoBehaviour
         foreach (Transform letter in title) letter.gameObject.SetActive(true);
     }
 
+    // One board made whole again — its lettering and the arrows standing beside
+    // it. Called on a board that is about to travel into the frame, never on
+    // one already in it: mending is invisible from off-screen, and that is the
+    // only way it should ever be seen.
+    void RestoreBoard(Transform board)
+    {
+        if (board == null) return;
+        foreach (var block in board.GetComponentsInChildren<MenuTitleBlock>(true))
+            block.gameObject.SetActive(true);
+        foreach (var arrow in board.GetComponentsInChildren<MenuOption>(true))
+            arrow.gameObject.SetActive(true);
+        // ...except the "next champion" arrow when there is nobody else to show.
+        if (hall != null) hall.RefreshOptions();
+    }
+
+    // The arrow that carried out a choice, put back on its own. It shattered to
+    // make the choice, and without it the board it belongs to has one fewer way
+    // out than it was built with.
+    void RestoreOption(MainMenuOption option)
+    {
+        if (slider == null) return;
+        foreach (var arrow in slider.GetComponentsInChildren<MenuOption>(true))
+            if (arrow.Option == option) arrow.gameObject.SetActive(true);
+        if (hall != null) hall.RefreshOptions();
+    }
+
     // The arrow the player picked shattered itself off; put every option on
-    // both screens back. Searched with inactive objects included, since a
-    // shattered arrow is exactly the object that is switched off.
+    // both screens back. For reopening the menu, which is the one moment the
+    // whole thing goes back to how it was built. Searched with inactive objects
+    // included, since a shattered arrow is exactly the object that is switched
+    // off.
     void RestoreOptions()
     {
         if (slider == null) return;

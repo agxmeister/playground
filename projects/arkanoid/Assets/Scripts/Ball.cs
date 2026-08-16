@@ -34,6 +34,11 @@ public class Ball : MonoBehaviour
     // enough to read as the ball getting out rather than as one more bounce.
     const float StallEscapeAngle = 35f;
 
+    // Below this fraction of its own speed the ball counts as stopped rather
+    // than as travelling slowly. Every step puts it back to exactly `speed`, so
+    // there is no honest way to be down here: it is a ball something has pinned.
+    const float PinnedSpeed = 0.05f;
+
     // How square-on a contact has to be to count as a vertical face.
     const float VerticalFaceDot = 0.9f;
 
@@ -144,7 +149,19 @@ public class Ball : MonoBehaviour
         if (IsAttached) return;
 
         var velocity = body.linearVelocity;
-        if (velocity.sqrMagnitude < 0.01f) return;
+
+        // A ball that has been stopped dead has to be sent off again, because
+        // nothing else will ever move it: the heading it would be given back is
+        // its own, and it hasn't got one. Two faces meeting almost head on can
+        // do it — the notch where an option arrow's tail meets its body is
+        // where we found it — and the way out is the way off any surface, away
+        // from the last one touched. This used to be a bail-out, which is what
+        // made a pinned ball a permanent one.
+        if (velocity.sqrMagnitude < speed * PinnedSpeed * (speed * PinnedSpeed))
+        {
+            body.linearVelocity = Steepen(velocity, StallEscapeAngle);
+            return;
+        }
 
         if (Mathf.Abs(velocity.y) < speed * Mathf.Sin(MinAngle * Mathf.Deg2Rad))
             velocity = Steepen(velocity, MinAngle);

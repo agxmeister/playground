@@ -15,7 +15,9 @@ using UnityEngine;
 //
 // Each symbol of both lines is its own hittable block, exactly like a letter of
 // the title — the plaque can be knocked apart while the player reads it, and
-// moving on to the next champion builds it again.
+// moving on to the next champion builds it again. Putting a knocked-out symbol
+// back is the menu's business rather than this component's: MainMenuPanel mends
+// whichever board is about to travel into the frame, symbols and arrows alike.
 public class HallOfFame : MonoBehaviour
 {
     // The top of the record book, best first. More than ten would make the
@@ -30,10 +32,19 @@ public class HallOfFame : MonoBehaviour
 
     // Both lines share one cell size, so a long name doesn't read as a
     // different font from its score. The width is what the plaque has between
-    // the two arrows; the cell cap is what keeps a three-letter name from
-    // being blown up to twice the height of the title.
-    const float MaxCell = 0.25f;
+    // the two arrows; what caps the cell is the gap between the two lines,
+    // measured off where they were authored (CellCap) rather than guessed at.
+    // A short name is held back by that cap rather than by the width — "AGX"
+    // over "300" has width to spare and would otherwise be blown up until the
+    // name's feet stood in the top of the score.
     const float MaxWidth = 9f;
+    // How much clear air the cap leaves between the two lines, in cells. One
+    // cell is the same gap BlockText leaves between letters along a line, so
+    // the plaque reads as evenly spaced in both directions.
+    const float LineGapCells = 1f;
+    // Only used if a line is missing, in which case there is no spacing to
+    // measure; the authored lines sit 1.5 apart, which is where this comes from.
+    const float FallbackCell = 0.1875f;
     const float LineDepth = 0.35f;
     const float LineUvScale = 2f;
 
@@ -111,21 +122,30 @@ public class HallOfFame : MonoBehaviour
         line.transform.localPosition = new Vector3(x, position.y, position.z);
     }
 
-    // Every symbol knocked out of the plaque put back. The title is a toy that
-    // stays broken until the menu reopens, but the plaque is what the player
-    // came here to read — a name with letters missing is a record they can't
-    // make out — so it is rebuilt each time the screen is arrived at.
-    public void RestoreSymbols()
-    {
-        foreach (var symbol in symbols)
-            if (symbol != null) symbol.SetActive(true);
-    }
-
     // The menu puts every shattered arrow back after a choice, including the
     // "next champion" one it may not be right to show.
     public void RefreshOptions()
     {
         if (nextOption != null) nextOption.SetActive(champions.Count > 1);
+    }
+
+    // The tallest cell the two lines can wear without growing into each other.
+    // A glyph is GlyphHeight cells tall and is drawn centred on its line, so
+    // the pair fits only while a glyph plus the gap covers the distance between
+    // the lines. Measured off the authored transforms rather than written down,
+    // so moving a line in the scene resizes the lettering to match instead of
+    // silently overlapping it — which is exactly what a 0.25 cell used to do
+    // across the 1.5 the lines stand apart.
+    float CellCap
+    {
+        get
+        {
+            if (nameLine == null || scoreLine == null) return FallbackCell;
+            float spacing = Mathf.Abs(
+                nameLine.transform.localPosition.y - scoreLine.transform.localPosition.y);
+            if (spacing <= 0f) return FallbackCell;
+            return spacing / (BlockText.GlyphHeight + LineGapCells);
+        }
     }
 
     // xOffset is where along the plaque's travel this champion is built: 0 for
@@ -138,7 +158,7 @@ public class HallOfFame : MonoBehaviour
         string score = empty ? "" : champions[index].score.ToString();
 
         int columns = Mathf.Max(BlockText.WordColumns(name), BlockText.WordColumns(score));
-        float cell = Mathf.Min(MaxCell, MaxWidth / columns);
+        float cell = Mathf.Min(CellCap, MaxWidth / columns);
 
         BuildLine(nameLine, "ChampionName", name, cell, xOffset);
         BuildLine(scoreLine, "ChampionScore", score, cell, xOffset);

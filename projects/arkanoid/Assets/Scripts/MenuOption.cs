@@ -16,12 +16,23 @@ public class MenuOption : MonoBehaviour
 
     [SerializeField] MainMenuOption option;
 
+    // Which choice this arrow carries, so the panel can find it again to put it
+    // back after the change it set off.
+    public MainMenuOption Option => option;
+
     void OnCollisionEnter2D(Collision2D collision)
     {
         if (collision.collider.GetComponent<Ball>() == null) return;
 
-        // The panel refuses every hit after the first, including one on the
-        // other slab while the rubble of this one is still falling.
+        // An arrow only breaks when its hit is taken as the choice. The panel
+        // refuses every hit after the first, and any hit on the board that
+        // isn't up; a refused arrow simply bounces the ball, like the frame
+        // does. It has to: an arrow is a screen's only way out, and it is put
+        // back on the way *in* to its board, so one broken on a board already
+        // in the frame would stay broken — knocking out HALL OF FAME during a
+        // change would strand the player on the title screen with no way to
+        // reach the hall at all. Lettering is a toy and comes apart whenever it
+        // is struck; the arrows are the controls.
         var panel = GetComponentInParent<MainMenuPanel>();
         if (panel == null || !panel.OnOptionHit(option)) return;
 
