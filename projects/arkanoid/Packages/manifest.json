@@ -1,4 +1,7 @@
 {
+  "testables": [
+    "com.agxmeister.uplink"
+  ],
   "dependencies": {
     "com.agxmeister.uplink": "file:/Users/alexeyfilatev/Documents/Projects/agxmeister/uplink",
     "com.unity.ai.navigation": "2.0.14",
