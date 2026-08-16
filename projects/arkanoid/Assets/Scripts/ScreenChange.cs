@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 // A piece of a menu screen while it is moving: the transforms it is made of and
 // where each of them rests, so the motion can be written as an offset from the
@@ -9,14 +10,28 @@ using UnityEngine;
 // arrow standing beside them.
 //
 // It also carries what the piece is made of as far as a change is concerned:
-// the colliders that say whether it can be hit, and the renderers that say
-// where it stands.
+// the colliders that say whether it can be hit, the renderers that say where it
+// stands, and the colours those renderers wear when nothing is in front of them
+// — which is what the fog is mixed into.
 public class ScreenPiece
 {
+    // How deep in the fog a screen has to be before it stops throwing a shadow.
+    // A shadow does not fade with its caster: a screen still mostly in the fog
+    // is a dim shape, and a crisp shadow beside it would draw the eye to the one
+    // thing that is meant to be barely there. Half way out is where it starts
+    // casting, by which point it is solid enough to own it.
+    const float ShadowFog = 0.5f;
+
+    static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+    static readonly int SmoothnessId = Shader.PropertyToID("_Smoothness");
+    static MaterialPropertyBlock block;
+
     readonly Transform[] parts;
     readonly Vector3[] homes;
     readonly Collider2D[] colliders;
     readonly Renderer[] renderers;
+    readonly Color[] colours;
+    readonly float[] gloss;
 
     public ScreenPiece(params Transform[] parts) : this((IList<Transform>)parts) { }
 
@@ -39,6 +54,18 @@ public class ScreenPiece
         }
         colliders = foundColliders.ToArray();
         renderers = foundRenderers.ToArray();
+        colours = new Color[renderers.Length];
+        gloss = new float[renderers.Length];
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            var material = renderers[i] != null ? renderers[i].sharedMaterial : null;
+            colours[i] = material != null && material.HasProperty(BaseColorId)
+                ? material.GetColor(BaseColorId)
+                : Color.white;
+            gloss[i] = material != null && material.HasProperty(SmoothnessId)
+                ? material.GetFloat(SmoothnessId)
+                : 0f;
+        }
     }
 
     // Across the frame by `x` and behind the playing plane by `depth`, both
@@ -50,10 +77,48 @@ public class ScreenPiece
                 parts[i].localPosition = homes[i] + new Vector3(x, 0f, depth);
     }
 
+    // How much of the fog is in front of this piece, 0 for none and 1 for all of
+    // it. The fog is not a volume the renderer knows about — it is the colour
+    // the backdrop is, mixed into whatever the piece wears, per instance so that
+    // one screen can be in it while the other is not. At 1 the piece is the fog's
+    // own colour, which is what lets it come out of the murk rather than appear
+    // in front of it.
+    public void SetFog(float amount)
+    {
+        amount = Mathf.Clamp01(amount);
+        block ??= new MaterialPropertyBlock();
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            var renderer = renderers[i];
+            if (renderer == null) continue;
+            // Out of the fog is the material's own colour and nothing on top of
+            // it, rather than the material's colour written into a block: a
+            // screen at rest is a screen this was never applied to.
+            if (amount <= 0f)
+            {
+                renderer.SetPropertyBlock(null);
+            }
+            else
+            {
+                renderer.GetPropertyBlock(block);
+                block.SetColor(BaseColorId, Color.Lerp(colours[i], ScreenChange.FogColor, amount));
+                // The sheen goes with the colour, or the fog is given away by
+                // the one thing it cannot cover: a lit face still catching a
+                // highlight. The fog's far wall is matte, so a screen fully in
+                // the fog has to be matte too, and a screen coming out of it
+                // takes its gloss back as it takes its colour back.
+                block.SetFloat(SmoothnessId, Mathf.Lerp(gloss[i], 0f, amount));
+                renderer.SetPropertyBlock(block);
+            }
+            renderer.shadowCastingMode =
+                amount > ShadowFog ? ShadowCastingMode.Off : ShadowCastingMode.On;
+        }
+    }
+
     // A screen under the plane is not in the game: the ball passes over it
-    // while it travels, and it only becomes something to hit once it is
-    // standing in the plane. This is also what keeps a screen from being broken
-    // by the ball it rises into — there is no collision to break it.
+    // while it rises, and it only becomes something to hit once it is standing
+    // in the plane. This is also what keeps a screen from being broken by the
+    // ball it rises into — there is no collision to break it.
     public void SetSolid(bool solid)
     {
         foreach (var collider in colliders)
@@ -93,13 +158,31 @@ public class ScreenPiece
 // How the menu changes screens: in two dimensions rather than one.
 //
 // A change used to be a single slide across the frame, one screen out and the
-// next in, both of them in the plane the ball plays on. It happens in depth as
-// well now. The screen being left flies out across the frame, in the plane and
-// solid the whole way — the rally carries on through a change, and what the
-// ball breaks on a departing board stays broken. The screen arriving comes in
-// *under* the plane, in the background, where it is only scenery: it cannot be
-// hit, and the ball passes over it while it travels. Only when it is in place
-// does it rise into the plane and become part of the game again.
+// next in, both of them in the plane the ball plays on. The second half of it
+// happens in depth now. The screen being left flies out across the frame, in
+// the plane and solid the whole way — the rally carries on through a change,
+// and what the ball breaks on a departing board stays broken. The screen
+// arriving does not travel across at all: it is already standing where it
+// belongs, down in the fog behind the playing plane, and it **rises out of the
+// fog** into place.
+//
+// The fog is a colour here and two drifting banks of haze in the room itself
+// (see MenuFog): what a screen wears is the colour, what a player watches is
+// the haze. The two are one thing on purpose — the banks hang in the same
+// shallow space a screen sinks into, so a screen down in the murk is behind
+// them and is veiled by whatever drifts across it.
+//
+// The fog is what the space between the playing plane and the backdrop is,
+// rather than a gap with a wall at the end of it. It is only a hand's breadth
+// deep — FogWall, which is where the backdrop stands — because every shadow on
+// the menu is thrown onto that backdrop and a shadow's drop is its object's gap
+// from it times the tangent of the light's pitch. Keeping the wall close keeps
+// the shadows short; what gives an arriving screen somewhere to be is not
+// distance but the fog itself, which takes the screen's colour towards its own
+// (ScreenPiece.SetFog) the deeper the screen is. A screen waits at FogDepth,
+// which is behind the wall — out of sight entirely — and by the time it clears
+// the wall's face it is wearing the fog's own colour, so it emerges rather than
+// appears, and darkens back into nothing if it ever went the other way.
 //
 // The one thing that can be standing where it rises is the ball. A screen
 // coming up under a ball is not broken by it and does not shoulder it aside —
@@ -109,17 +192,30 @@ public class ScreenPiece
 // when the ball it lifted is back in the plane and clear of it.
 public static class ScreenChange
 {
-    // How far behind the playing plane an arriving screen travels. The menu's
-    // backdrop stands far enough back to leave room for it (ArkanoidSetup's
-    // MenuBackdropZ), and at this depth a screen reads as one standing behind
-    // the plane rather than as one that has merely been drawn smaller.
-    public const float SinkDepth = 1f;
+    // Where the fog's far side is: how far behind the playing plane the menu's
+    // backdrop stands (ArkanoidSetup's MenuBackdropZ is built from this). A
+    // screen this deep is wearing the fog's colour outright. It is deliberately
+    // short — this gap is also what every shadow on the menu is thrown across.
+    public const float FogWall = 0.55f;
+
+    // How far behind the plane an arriving screen waits. Deeper than the wall by
+    // more than the thickest thing a screen carries (an option arrow, half of
+    // whose 0.5 depth stands in front of its centre), so a screen waiting there
+    // is behind the backdrop and not to be seen at all.
+    public const float FogDepth = 0.9f;
+
+    // The colour the fog takes a screen towards, which is the colour of the wall
+    // at the back of it (ArkanoidSetup makes the menu backdrop's material this).
+    // They are one colour on purpose: a screen fully in the fog and the fog's
+    // own far side have nothing to tell them apart.
+    public static readonly Color FogColor = new Color(0.05f, 0.07f, 0.12f);
 
     const float FlyOutDuration = 0.35f;
-    const float FlyInDuration = 0.45f;
-    // Shorter than either travel: the rise is the arrival, and a slow one reads
-    // as the screen struggling into its place rather than taking it.
-    const float RaiseDuration = 0.3f;
+    // The rise is the whole of an arrival now that nothing travels in across the
+    // frame, so it is given the time the travel used to have. Rising out of fog
+    // is a fade as much as a movement, and a fade this short still needs to be
+    // watchable.
+    const float RiseDuration = 0.55f;
 
     // How long an arrived screen will wait for a ball riding on it to get clear
     // before it goes solid regardless. A ball in play is always travelling and
@@ -140,34 +236,37 @@ public static class ScreenChange
         piece.MoveTo(distance, 0f);
     }
 
-    // Where a screen waits to come in from: under the plane, off the frame, and
-    // not there to be hit. FlyIn does this itself, but a screen that is built
-    // rather than standing ready has to be put out of the way the moment it
-    // exists — a champion's plaque is built at the place the plaque rests, and
-    // the champion it replaces has not left it yet.
-    public static void Stage(ScreenPiece piece, float from)
+    // Where a screen waits to rise from: in its own place, down in the fog
+    // behind the backdrop, not there to be hit and not there to be seen. Rise
+    // does this itself, but a screen has to be put down there the moment it can
+    // be looked at — the champion's plaque is built where the plaque rests,
+    // while the champion it replaces is still standing there, and the board
+    // being travelled to comes into the frame the moment the slider hands the
+    // layout over.
+    public static void Stage(ScreenPiece piece)
     {
         piece.SetSolid(false);
-        piece.MoveTo(from, SinkDepth);
+        piece.MoveTo(0f, FogDepth);
+        piece.SetFog(1f);
     }
 
-    // The screen arriving: in from `from` under the plane, then up into it.
-    public static IEnumerator FlyIn(ScreenPiece piece, float from, Ball ball)
+    // The screen arriving: up out of the fog into the playing plane, in place.
+    public static IEnumerator Rise(ScreenPiece piece, Ball ball)
     {
-        Stage(piece, from);
-        for (float t = 0f; t < FlyInDuration; t += Time.deltaTime)
+        Stage(piece);
+        for (float t = 0f; t < RiseDuration; t += Time.deltaTime)
         {
-            piece.MoveTo(Mathf.SmoothStep(from, 0f, t / FlyInDuration), SinkDepth);
-            yield return null;
-        }
-
-        for (float t = 0f; t < RaiseDuration; t += Time.deltaTime)
-        {
-            piece.MoveTo(0f, Mathf.SmoothStep(SinkDepth, 0f, t / RaiseDuration));
+            float depth = Mathf.SmoothStep(FogDepth, 0f, t / RiseDuration);
+            piece.MoveTo(0f, depth);
+            // Full fog from the wall back — which is all the way back to where
+            // it waits, and all of it out of sight behind the wall. What is
+            // watched is the clearing, from the wall's face into the plane.
+            piece.SetFog(depth / FogWall);
             Carry(piece, ball);
             yield return null;
         }
         piece.MoveTo(0f, 0f);
+        piece.SetFog(0f);
 
         // In the plane, and perhaps under the ball. It is solid again only once
         // the ball it lifted is back in the plane and off it — going solid
@@ -187,7 +286,9 @@ public static class ScreenChange
     // it, so it is carried out of the plane rather than run through. The ball
     // is told where the face is rather than how far to move: how far in front
     // of it the ball has to sit is the ball's own size, which it knows and this
-    // does not.
+    // does not. A face still down in the fog asks for nothing — the ball is
+    // already well in front of it — so the lift begins exactly as the screen
+    // reaches the ball rather than as the rise starts.
     static void Carry(ScreenPiece piece, Ball ball)
     {
         if (ball == null) return;

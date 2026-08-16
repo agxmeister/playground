@@ -25,6 +25,8 @@ public static class ArkanoidSetup
     const string BackdropMaterialPath = MaterialsFolder + "/Backdrop.mat";
     const string TexturesFolder = "Assets/Textures";
     const string BrickWallTexturePath = TexturesFolder + "/BrickWall.png";
+    const string FogTexturePath = TexturesFolder + "/Fog.png";
+    const string MenuFogMaterialPath = MaterialsFolder + "/MenuFog.mat";
     const string WallSideMaterialPath = MaterialsFolder + "/WallSide.mat";
     const string WallTopMaterialPath = MaterialsFolder + "/WallTop.mat";
     const string MeshesFolder = "Assets/Meshes";
@@ -149,30 +151,36 @@ public static class ArkanoidSetup
     // seen from outside its own room is on the journey between the two.
     const float MenuBackdropWidth = 28f;
     const float MenuBackdropDepth = 0.4f;
-    // How much clear air a screen keeps behind it while it is under the plane.
-    const float MenuBackdropClearance = 0.3f;
-    // The backdrop stands back far enough for a screen to fly in *under* the
-    // playing plane and still be seen in front of it: the sunken plane is
-    // ScreenChange.SinkDepth behind the playing one, the deepest thing standing
-    // on it — an option arrow — is half its own depth thicker again, and the
-    // backdrop's front face is half its depth in front of its centre. It used
-    // to sit at z -3, a fifth of a unit behind the letters, which left nothing
-    // for a screen to pass through. Standing it back lengthens every shadow the
-    // menu throws (the drop is the gap times the tangent of LightPitch), and
-    // that is the depth being paid for: the boards now visibly float in front
-    // of a wall rather than lying against it, which is what makes one of them
-    // rising off it read as movement in depth at all.
-    const float MenuBackdropZ = MenuPlaneZ + ScreenChange.SinkDepth
-        + MenuArrowDepth / 2f + MenuBackdropClearance + MenuBackdropDepth / 2f;
+    // The backdrop is the far side of the fog a menu screen rises out of (see
+    // ScreenChange): its front face stands ScreenChange.FogWall behind the
+    // playing plane, so its centre is half its own depth further back again.
+    // It is close on purpose. Every shadow on the menu is thrown onto this
+    // surface and a shadow's drop is its object's gap from it times the tangent
+    // of LightPitch, so the gap is the length of every shadow the menu has:
+    // a fifth of a unit at this depth. It was stood a unit and a half back for
+    // a while, to leave a screen room to fly in behind the plane and still be
+    // seen; what gives an arriving screen somewhere to be now is the fog rather
+    // than the room, and the shadows came back in with the wall.
+    const float MenuBackdropZ = MenuPlaneZ + ScreenChange.FogWall + MenuBackdropDepth / 2f;
+    // The two banks of haze that hang in the fog itself, between the playing
+    // plane and that backdrop (see MenuFog). Two rather than one, at different
+    // depths and different sizes, because a single sheet sliding along reads as
+    // a picture being pulled past and two passing over each other read as fog.
+    // Both stand clear of the plane by more than the half-depth of anything on
+    // it — an option arrow, at a quarter of a unit, is the thickest — so the
+    // menu is always in front of its own weather.
+    const float MenuFogFarDepth = 0.42f;
+    const float MenuFogNearDepth = 0.3f;
     // The hall of fame's two lines and the arrows that drive them, a screen's
     // width to the left of the title board inside the slider. The lines stand
-    // 2.25 apart rather than the 1.5 they were authored at, because the board
-    // moved out in front of its backdrop (see MenuBackdropZ) and the name's
-    // shadow now falls a unit below it — straight across the score, at the old
-    // spacing. HallOfFame sizes the lettering to whatever gap it finds, so
-    // widening this is the whole of the fix.
-    const float HallNameY = 3f;
-    const float HallScoreY = 0.75f;
+    // 1.75 apart rather than the 1.5 they were authored at, so the name's
+    // shadow falls in the gap rather than across the score. They were 2.25
+    // apart while the backdrop stood well back and that shadow was a whole unit
+    // long. HallOfFame sizes the lettering to whatever gap it finds, so this
+    // spacing is also what caps the cell: 1.75 puts it at exactly the title's
+    // own 0.2, which is as large as the plaque should ever be.
+    const float HallNameY = 2.75f;
+    const float HallScoreY = 1f;
     const float HallArrowY = 1.85f;
     const float MenuPaddleY = -3.6f;
     // Slower than the playfield's 8: the menu is steered, not fought. Scaled
@@ -778,7 +786,7 @@ public static class ArkanoidSetup
             if (menuTitleMaterial == null)
                 CreateTexturedMaterial(MenuTitleMaterialPath, brickWall, new Color(0.86f, 0.36f, 0.26f));
             if (menuBackdropMaterial == null)
-                CreateLitMaterial(MenuBackdropMaterialPath, new Color(0.05f, 0.07f, 0.12f));
+                CreateFogMaterial(MenuBackdropMaterialPath);
             if (menuLabelMaterial == null)
             {
                 CreateLitMaterial(MenuOptionStartMaterialPath, new Color(0.18f, 0.80f, 0.44f));
@@ -998,8 +1006,12 @@ public static class ArkanoidSetup
         // behind the letters, which is fine for a screen that only ever moves
         // across the frame and no use at all to one that arrives from behind
         // it: there was nowhere for a screen to be under the plane and still be
-        // seen. See MenuBackdropZ for what the depth is made of. One transform,
-        // so it edits in place rather than going through stage 50's rebuild.
+        // seen. One transform, so it edits in place rather than going through
+        // stage 50's rebuild. Stage 62 brings it back in again — a screen rises
+        // out of the fog in place now and needs no room behind the plane — so
+        // all that is left of this stage is the width, and its guard, written
+        // against a MenuBackdropZ that has since moved, is only ever true of a
+        // backdrop standing nearer the plane than the fog's own far side.
         var sunkBackdrop = FindRootObject("MenuScreen") != null
             ? FindRootObject("MenuScreen").transform.Find("MenuBackdrop")
             : null;
@@ -1049,6 +1061,130 @@ public static class ArkanoidSetup
             Debug.Log("[ArkanoidSetup] Stage 61: queued scene save for the next editor tick.");
             return;
         }
+
+        // Stage 62: bring the menu's backdrop back in against the playing plane
+        // and make it the far side of a fog rather than a wall. Standing it back
+        // (stage 58) bought an arriving screen room to be seen under the plane
+        // and paid for it in shadows: at a unit and a half of clearance every
+        // letter on the menu trailed one. A screen rises out of the fog in place
+        // now (see ScreenChange), which needs no room at all, so the wall comes
+        // back to ScreenChange.FogWall — a fifth of a unit of shadow — and the
+        // plaque's lines come back with it, from the 2.25 that long shadow
+        // forced them to down to 1.75. The material is matted at the same time:
+        // a sheen is what says "wall". Three transforms and one material, so it
+        // edits in place rather than going through stage 50's rebuild.
+        var wallBackdrop = FindRootObject("MenuScreen") != null
+            ? FindRootObject("MenuScreen").transform.Find("MenuBackdrop")
+            : null;
+        if (wallBackdrop != null && wallBackdrop.localPosition.z > MenuBackdropZ + 0.01f)
+        {
+            wallBackdrop.localPosition = new Vector3(0f, 0f, MenuBackdropZ);
+            var fogMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuBackdropMaterialPath);
+            if (fogMaterial != null)
+            {
+                fogMaterial.SetColor("_BaseColor", ScreenChange.FogColor);
+                fogMaterial.SetFloat("_Smoothness", 0f);
+                EditorUtility.SetDirty(fogMaterial);
+                AssetDatabase.SaveAssets();
+            }
+            var plaque = FindRootObject("MenuScreen").transform.Find("MenuSlider/MenuHall");
+            var plaqueName = plaque != null ? plaque.Find("ChampionName") : null;
+            var plaqueScore = plaque != null ? plaque.Find("ChampionScore") : null;
+            if (plaqueName != null) plaqueName.localPosition = new Vector3(0f, HallNameY, MenuPlaneZ);
+            if (plaqueScore != null) plaqueScore.localPosition = new Vector3(0f, HallScoreY, MenuPlaneZ);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 62: brought the menu backdrop in as fog (scene left dirty).");
+            return;
+        }
+
+        // Stage 63: persist stage 62, gated on the scene file still holding the
+        // backdrop out where it stood back from the plane.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("m_LocalPosition: {x: 0, y: 0, z: -1.95}"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 63: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 64: the cloud the fog is made of — one tileable sheet of soft
+        // patches, walked across the menu's haze banks rather than simulated.
+        if (!File.Exists(ToAbsolute(FogTexturePath)))
+        {
+            WriteFogTexture();
+            AssetDatabase.Refresh();
+            Debug.Log("[ArkanoidSetup] Stage 64: wrote the fog texture.");
+            return;
+        }
+
+        // Stage 65: the material the haze banks wear. Transparent, unlit and
+        // never in shadow: haze is the light in the air rather than a surface
+        // the light falls on.
+        if (!File.Exists(ToAbsolute(MenuFogMaterialPath)))
+        {
+            var fogTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(FogTexturePath);
+            if (fogTexture == null)
+            {
+                Debug.Log("[ArkanoidSetup] Fog texture not importable yet, waiting for next reload.");
+                return;
+            }
+            CreateHazeMaterial(MenuFogMaterialPath, fogTexture);
+            Debug.Log("[ArkanoidSetup] Stage 65: created the fog material.");
+            return;
+        }
+
+        // Stage 66: hang the two banks of haze in the menu's fog. Outside the
+        // slider with the backdrop, since the fog is the room's weather rather
+        // than anything a screen carries with it.
+        var fogRoom = FindRootObject("MenuScreen");
+        if (fogRoom != null && fogRoom.transform.Find("MenuFogFar") == null)
+        {
+            var hazeMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuFogMaterialPath);
+            if (hazeMaterial == null) return;
+            CreateFogBank(fogRoom.transform, "MenuFogFar", MenuFogFarDepth,
+                new Vector2(1.7f, 1.45f), new Vector2(0.01f, 0.004f), hazeMaterial);
+            CreateFogBank(fogRoom.transform, "MenuFogNear", MenuFogNearDepth,
+                new Vector2(2.6f, 2.2f), new Vector2(-0.007f, 0.005f), hazeMaterial);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 66: hung the menu's banks of haze (scene left dirty).");
+            return;
+        }
+
+        // Stage 67: persist stage 66, gated on the scene file not yet knowing
+        // about the banks it hung.
+        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains("m_Name: MenuFogFar"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 67: queued scene save for the next editor tick.");
+            return;
+        }
+    }
+
+    // One sheet of drifting haze, as wide as the backdrop it hangs in front of
+    // so its own edges are never in the frame. A quad rather than a box: it has
+    // no thickness to show, and nothing is ever behind it but the backdrop.
+    static void CreateFogBank(Transform room, string name, float depth,
+        Vector2 tiling, Vector2 drift, Material material)
+    {
+        var bank = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        bank.name = name;
+        // A primitive brings a 3D collider with it. Gameplay is 2D so it could
+        // do no harm, but a sheet of weather is not something to run into.
+        Object.DestroyImmediate(bank.GetComponent<Collider>());
+        bank.transform.SetParent(room, false);
+        bank.transform.localPosition = new Vector3(0f, 0f, MenuPlaneZ + depth);
+        bank.transform.localScale = new Vector3(MenuBackdropWidth, 24f, 1f);
+
+        var sheet = bank.GetComponent<MeshRenderer>();
+        sheet.sharedMaterial = material;
+        // Haze has nothing to cast and nothing to catch.
+        sheet.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        sheet.receiveShadows = false;
+
+        var fog = bank.AddComponent<MenuFog>();
+        var fogSo = new SerializedObject(fog);
+        fogSo.FindProperty("tiling").vector2Value = tiling;
+        fogSo.FindProperty("drift").vector2Value = drift;
+        fogSo.ApplyModifiedPropertiesWithoutUndo();
     }
 
     // Stage-56 retrofit. Everything it touches is a scene edit, so it can all
@@ -1552,6 +1688,92 @@ public static class ArkanoidSetup
         Object.DestroyImmediate(texture);
     }
 
+    // The cloud the menu's fog is made of: soft patches that tile, white
+    // throughout with the shape carried entirely in the alpha, so a haze bank
+    // is one colour thickening and thinning rather than a picture of clouds.
+    // Three octaves of value noise, the coarsest carrying most of it — fog is
+    // large and slow, and detail at the pixel would read as static.
+    static void WriteFogTexture()
+    {
+        const int size = 256;
+        var coarse = FogLattice(3, 20240816);
+        var middle = FogLattice(6, 90210);
+        var fine = FogLattice(12, 4711);
+
+        var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float u = (float)x / size, v = (float)y / size;
+                float value = 0.55f * SampleFogLattice(coarse, u, v)
+                    + 0.3f * SampleFogLattice(middle, u, v)
+                    + 0.15f * SampleFogLattice(fine, u, v);
+                // Cut the thin half away and ease the rest in, which leaves
+                // banks with clear air between them rather than an even veil.
+                float alpha = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.36f, 0.78f, value));
+                texture.SetPixel(x, y, new Color(1f, 1f, 1f, alpha));
+            }
+        }
+        texture.Apply();
+        Directory.CreateDirectory(ToAbsolute(TexturesFolder));
+        File.WriteAllBytes(ToAbsolute(FogTexturePath), texture.EncodeToPNG());
+        Object.DestroyImmediate(texture);
+    }
+
+    // A grid of random values that wraps, which is what makes the cloud tile:
+    // the sample at 1 is the sample at 0. Seeded, so a from-scratch build
+    // reproduces the same weather.
+    static float[,] FogLattice(int period, int seed)
+    {
+        var random = new System.Random(seed);
+        var values = new float[period, period];
+        for (int y = 0; y < period; y++)
+            for (int x = 0; x < period; x++)
+                values[x, y] = (float)random.NextDouble();
+        return values;
+    }
+
+    static float SampleFogLattice(float[,] values, float u, float v)
+    {
+        int period = values.GetLength(0);
+        float x = u * period, y = v * period;
+        int x0 = Mathf.FloorToInt(x) % period, y0 = Mathf.FloorToInt(y) % period;
+        int x1 = (x0 + 1) % period, y1 = (y0 + 1) % period;
+        // Smoothstepped rather than straight, so the lattice's own grid doesn't
+        // show through as creases.
+        float fx = Mathf.SmoothStep(0f, 1f, x - Mathf.Floor(x));
+        float fy = Mathf.SmoothStep(0f, 1f, y - Mathf.Floor(y));
+        return Mathf.Lerp(
+            Mathf.Lerp(values[x0, y0], values[x1, y0], fx),
+            Mathf.Lerp(values[x0, y1], values[x1, y1], fx),
+            fy);
+    }
+
+    // The haze the fog's banks wear: unlit, because haze is light in the air
+    // rather than a surface catching it, and transparent, because the whole of
+    // it is how much of what is behind it still shows. A little brighter than
+    // the fog's own colour — murk with nothing lighting it would be a stain.
+    static void CreateHazeMaterial(string path, Texture2D texture)
+    {
+        var material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+        material.SetTexture("_BaseMap", texture);
+        // Lighter and bluer than the fog's own colour, or there is nothing to
+        // see: haze the same darkness as the murk behind it changes nothing
+        // when it drifts across it. Where the cloud is at its thickest this
+        // lifts the backdrop by about half again, which is a bank of fog
+        // passing rather than a light coming on.
+        material.SetColor("_BaseColor", new Color(0.22f, 0.26f, 0.36f, 0.6f));
+        material.SetFloat("_Surface", 1f);
+        material.SetFloat("_Blend", 0f);
+        material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        material.SetFloat("_ZWrite", 0f);
+        material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        AssetDatabase.CreateAsset(material, path);
+    }
+
     static void ApplyWallMesh(GameObject wall, Mesh mesh, Vector2 colliderSize)
     {
         wall.GetComponent<MeshFilter>().sharedMesh = mesh;
@@ -1690,6 +1912,20 @@ public static class ArkanoidSetup
         var material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
         material.SetColor("_BaseColor", color);
         material.SetTexture("_BaseMap", texture);
+        AssetDatabase.CreateAsset(material, path);
+    }
+
+    // The menu's backdrop, which is the far side of the fog rather than a wall
+    // standing behind the screens (see ScreenChange). It wears the fog's own
+    // colour, so that a screen fully in the fog and the murk it is coming out of
+    // have nothing to tell them apart, and it is matte: a sheen running across
+    // it is the one thing that reads as a surface at a distance rather than as
+    // air with nothing in it.
+    static void CreateFogMaterial(string path)
+    {
+        var material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        material.SetColor("_BaseColor", ScreenChange.FogColor);
+        material.SetFloat("_Smoothness", 0f);
         AssetDatabase.CreateAsset(material, path);
     }
 

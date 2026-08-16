@@ -1,6 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Rendering;
 
 public enum MainMenuOption { StartGame, HallOfFame, NextChampion, BackToMenu }
 
@@ -18,7 +19,7 @@ public enum MainMenuOption { StartGame, HallOfFame, NextChampion, BackToMenu }
 // The menu is two screens side by side inside MenuSlider — the title board and
 // the hall of fame a screen's width to its left — and choosing one is travelled
 // to rather than cut to: the board being left flies out across the frame and
-// the one arriving comes in under the playing plane and rises into it (see
+// the one arriving rises out of the fog behind the playing plane (see
 // ScreenChange). The slider holds the layout; a change moves the boards.
 // The paddle and ball are outside the slider, so they stay put while the world
 // behind them moves.
@@ -256,11 +257,12 @@ public class MainMenuPanel : MonoBehaviour
         busy = false;
     }
 
-    // One screen out and the next one in — no longer as one movement of the
+    // One screen out and the next one up — no longer as one movement of the
     // slider carrying both, because the two halves no longer travel in the same
-    // plane: the screen being left flies out across the frame in the playing
-    // plane, and the one arriving comes in under it and rises (see
-    // ScreenChange). The slider is only the layout now.
+    // plane, or even in the same direction: the screen being left flies out
+    // across the frame in the playing plane, and the one arriving never crosses
+    // the frame at all — it stands where it belongs, down in the fog, and rises
+    // out of it (see ScreenChange). The slider is only the layout now.
     IEnumerator ChangeTo(bool toHall)
     {
         showingHall = toHall;
@@ -278,20 +280,24 @@ public class MainMenuPanel : MonoBehaviour
         // The screen that has gone is a screen's width off to one side. Handing
         // that offset over to the slider, which is where the layout keeps it,
         // moves nothing on screen — the slider gains exactly what the screen
-        // gives up — and leaves the arriving screen the whole of its own travel
-        // to make, from off the other side of the frame.
+        // gives up — and carries the arriving screen into the frame, which is
+        // why it goes down into the fog in the same frame: it is in the middle
+        // of the picture from here on, and nothing should be seen there until
+        // it rises.
+        ScreenChange.Stage(arriving);
         slider.localPosition = new Vector3(toHall ? ScreenSpacing : 0f, 0f, 0f);
         leaving.MoveTo(0f, 0f);
 
-        yield return ScreenChange.FlyIn(arriving, -distance, ball);
+        yield return ScreenChange.Rise(arriving, ball);
     }
 
     // Everything a screen change moves, put back where it was authored, and
-    // everything it switched off made solid again. A change is a coroutine, and
-    // leaving the menu (START, and the round it leads to) stops one wherever it
-    // had got to — with a screen off the frame, or under the plane and not
-    // there to be hit. The menu is only ever reopened from the top, so this is
-    // where that is undone.
+    // everything it switched off made solid, lit and visible again. A change is
+    // a coroutine, and leaving the menu (START, and the round it leads to) stops
+    // one wherever it had got to — with a screen off the frame, or down in the
+    // fog: not there to be hit, wearing the fog's colour instead of its own and
+    // casting no shadow. The menu is only ever reopened from the top, so this is
+    // where all of that is undone.
     void ResetScreens()
     {
         if (slider == null) return;
@@ -300,6 +306,13 @@ public class MainMenuPanel : MonoBehaviour
         if (hall != null) hall.transform.localPosition = hallHome;
         foreach (var collider in slider.GetComponentsInChildren<Collider2D>(true))
             collider.enabled = true;
+        // Nothing else on the menu tints per instance, so clearing the block
+        // outright is the same thing as taking the fog out of it.
+        foreach (var renderer in slider.GetComponentsInChildren<Renderer>(true))
+        {
+            renderer.SetPropertyBlock(null);
+            renderer.shadowCastingMode = ShadowCastingMode.On;
+        }
     }
 
     void OnEnable()

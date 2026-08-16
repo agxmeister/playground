@@ -40,23 +40,25 @@ public class HallOfFame : MonoBehaviour
     const float MaxWidth = 9f;
     // How much clear air the cap leaves between the two lines, in world units.
     // It used to be one cell — the same gap BlockText leaves between letters
-    // along a line — and what fills it now is the name's shadow: the menu's
-    // boards stand a good way in front of their backdrop so that a screen can
-    // arrive under the playing plane (see ScreenChange), and a shadow's drop is
-    // that gap times the tangent of the light's pitch, which comes to about a
-    // unit. Anything less and the name's shadow is thrown across the score,
-    // which is a plaque you read past rather than read.
-    const float LineShadowGap = 1.05f;
+    // along a line — and what fills it now is the name's shadow: the plaque
+    // stands clear of the backdrop it throws that shadow onto, and a shadow's
+    // drop is that gap times the tangent of the light's pitch. The gap is the
+    // fog's depth (ScreenChange.FogWall), which is deliberately short, so this
+    // is a fifth of a unit and a little air rather than the whole unit it was
+    // when the backdrop stood well back. Anything less and the name's shadow is
+    // thrown across the score, which is a plaque you read past rather than read.
+    const float LineShadowGap = 0.35f;
     // Only used if a line is missing, in which case there is no spacing to
-    // measure; the authored lines sit 2.25 apart, which is where this comes from.
-    const float FallbackCell = 0.171f;
+    // measure; the authored lines sit 1.75 apart, which is where this comes from.
+    const float FallbackCell = 0.2f;
     const float LineDepth = 0.35f;
     const float LineUvScale = 2f;
 
-    // The champion doesn't swap on the spot: the plaque travels, the one being
-    // left behind out across the frame and the next one in under the plane
-    // behind it, the same change the menu's two screens make between them (see
-    // ScreenChange). A screen's width of it, so the two never share the frame.
+    // The champion doesn't swap on the spot: the one being left behind travels
+    // out across the frame, and the next one rises out of the fog behind it —
+    // the same change the menu's two screens make between them (see
+    // ScreenChange). A screen's width of travel, so the two never share the
+    // frame, and only the champion leaving makes it.
     const float ScrollDistance = MainMenuPanel.ScreenSpacing;
 
     readonly List<RecordEntry> champions = new List<RecordEntry>();
@@ -96,8 +98,8 @@ public class HallOfFame : MonoBehaviour
     // arrived at rather than swapped in. The champion being left behind stays
     // standing and travels out of the frame, so the change reads as movement
     // along a row of champions rather than as one plaque becoming another; the
-    // one arriving comes in under the playing plane and rises into it, which is
-    // the change every menu screen makes (see ScreenChange). The arrow that was
+    // one arriving rises out of the fog behind the playing plane, which is the
+    // change every menu screen makes (see ScreenChange). The arrow that was
     // hit travels in with them: name, score and arrow are one plaque, and it
     // shattered to make the choice, so it comes back in with the champion it
     // fetched rather than reappearing where it stood.
@@ -122,17 +124,18 @@ public class HallOfFame : MonoBehaviour
         var arrivingParts = new List<Transform>(groups);
         if (nextOption != null) arrivingParts.Add(nextOption.transform);
         var arriving = new ScreenPiece(arrivingParts);
-        // Out of the way at once. Render builds the champion where the plaque
-        // rests, and the one they are replacing is still standing there.
-        ScreenChange.Stage(arriving, -ScrollDistance);
-        // Which is also where the arrow can come back on: off the frame, under
-        // the plane, with the champion it fetched.
+        // Down into the fog at once. Render builds the champion where the plaque
+        // rests, and the one they are replacing is still standing there — the
+        // arriving champion has to be out of sight in the same frame they exist.
+        ScreenChange.Stage(arriving);
+        // Which is also where the arrow can come back on: behind the backdrop,
+        // with the champion it fetched.
         if (nextOption != null) nextOption.SetActive(true);
 
         yield return ScreenChange.FlyOut(leaving, ScrollDistance);
         // The champion who has left the frame goes now, out of sight.
         ClearPlaque(leavingSymbols, leavingGroups);
-        yield return ScreenChange.FlyIn(arriving, -ScrollDistance, ball);
+        yield return ScreenChange.Rise(arriving, ball);
     }
 
     // A shattered arrow is put back by the menu, or — for this one — scrolled
