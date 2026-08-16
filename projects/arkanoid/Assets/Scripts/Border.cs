@@ -1,26 +1,27 @@
 using UnityEngine;
 
-// One of the three walls that close the menu's room off at the left, right and
-// top edges of the screen. The menu has no walls to author: its border *is* the
-// camera's frame, which is only known at runtime and changes with the window,
-// so the walls are built and fitted by MainMenuPanel rather than placed in the
-// scene — the same reason the option arrows are pulled in to the frame they
-// find themselves in.
+// One of the three walls that close a room off at the left, right and top edges
+// of the screen. Neither room has walls to author: their border *is* the
+// camera's frame, which is only known at runtime and changes with the window, so
+// the walls are built and fitted by the room that owns them — MainMenuPanel for
+// the menu, Playfield for a round — rather than placed in the scene, the same
+// reason the menu's option arrows are pulled in to the frame they find
+// themselves in.
 //
 // They carry no renderer. What the player sees of the border is the ricochet
 // itself: a burst of sparks at the point of impact, which is why the collision
 // is handled here rather than left entirely to the physics engine.
 //
-// The bottom is deliberately left open — a ball that falls past the paddle
-// materialises back on it, exactly as a menu ball always has.
+// The bottom is deliberately left open — that is where a ball is lost in a
+// round, and on the menu one that falls past the paddle materialises back on it.
 [RequireComponent(typeof(BoxCollider2D))]
-public class MenuBorder : MonoBehaviour
+public class Border : MonoBehaviour
 {
     public enum Side { Left, Right, Top }
 
-    // How deep each wall runs behind the edge it closes. The menu's ball covers
-    // about 0.13 of a unit per fixed step, so this is far too thick to be
-    // tunnelled through however the frame is shaped.
+    // How deep each wall runs behind the edge it closes. The ball covers about
+    // 0.16 of a unit per fixed step at its fastest, so this is far too thick to
+    // be tunnelled through however the frame is shaped.
     const float Thickness = 2f;
 
     [SerializeField] Side side;
@@ -34,6 +35,19 @@ public class MenuBorder : MonoBehaviour
         Side.Right => Vector2.left,
         _ => Vector2.down,
     };
+
+    // Half the width and height of what the camera sees on the plane at `planeZ`.
+    // Extents rather than a rectangle, because a room is centred on itself
+    // rather than on the camera: the view travels between the two rooms with
+    // both of them still standing, and a frame measured around the camera would
+    // drag one room's edges along with it.
+    public static Vector2 FrameExtents(Camera camera, float planeZ)
+    {
+        float depth = planeZ - camera.transform.position.z;
+        var corner = camera.ViewportToWorldPoint(new Vector3(1f, 1f, depth));
+        var middle = camera.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, depth));
+        return new Vector2(corner.x - middle.x, corner.y - middle.y);
+    }
 
     // Builds the three walls under `room` if they aren't there yet and lays them
     // against the frame described by `centre` and `halfExtents`, with their
@@ -65,16 +79,16 @@ public class MenuBorder : MonoBehaviour
         }
     }
 
-    static MenuBorder Find(Transform room, Side side)
+    static Border Find(Transform room, Side side)
     {
         string name = $"Border{side}";
         var existing = room.Find(name);
-        if (existing != null) return existing.GetComponent<MenuBorder>();
+        if (existing != null) return existing.GetComponent<Border>();
 
         var go = new GameObject(name);
         go.transform.SetParent(room, false);
         go.AddComponent<BoxCollider2D>();
-        var border = go.AddComponent<MenuBorder>();
+        var border = go.AddComponent<Border>();
         border.side = side;
         return border;
     }

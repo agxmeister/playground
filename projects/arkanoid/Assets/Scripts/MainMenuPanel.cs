@@ -21,11 +21,13 @@ public enum MainMenuOption { StartGame, HallOfFame, NextChampion, BackToMenu }
 // The paddle and ball are outside the slider, so they stay put while the world
 // behind them moves.
 //
-// The menu's room is closed on three sides by the frame itself: MenuBorder
-// walls, built here and laid along the left, right and top edges of whatever
-// the camera actually sees, so the ball ricochets off the edge of the screen in
-// a burst of sparks rather than sailing out of it. The bottom is open, and a
-// ball that falls past the paddle materialises back on it.
+// The menu's room is closed on three sides by the frame itself: Border walls,
+// built here and laid along the left, right and top edges of whatever the
+// camera actually sees, so the ball ricochets off the edge of the screen in a
+// burst of sparks rather than sailing out of it. The bottom is open, and a
+// ball that falls past the paddle materialises back on it. A round's room is
+// built the same way now (see Playfield), which is what makes the two screens
+// one game rather than a bordered box and a full-width menu.
 public class MainMenuPanel : MonoBehaviour
 {
     [SerializeField] GameObject playGroup;
@@ -127,7 +129,9 @@ public class MainMenuPanel : MonoBehaviour
     // The menu's field is closed at the left, right and top by the frame itself
     // — there is nothing to author, since the frame is only known once there is
     // a window — so the walls are built here and laid against its edges on the
-    // menu's own plane, the one everything hittable stands on.
+    // menu's own plane, the one everything hittable stands on. The paddle takes
+    // its travel from the same measurement: the field is the frame, so it may
+    // go as far as its own body allows either way.
     //
     // The frame is measured as extents and then centred on *the room* rather
     // than on the camera: the view travels out of this room to the playfield
@@ -137,13 +141,11 @@ public class MainMenuPanel : MonoBehaviour
     {
         if (ball == null) return;
         float planeZ = ball.transform.position.z;
-        float depth = planeZ - camera.transform.position.z;
-        var corner = camera.ViewportToWorldPoint(new Vector3(1f, 1f, depth));
-        var middle = camera.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, depth));
-        MenuBorder.Fit(transform,
-            new Vector2(transform.position.x, middle.y),
-            new Vector2(corner.x - middle.x, corner.y - middle.y),
-            planeZ);
+        var extents = Border.FrameExtents(camera, planeZ);
+        Border.Fit(transform,
+            new Vector2(transform.position.x, camera.transform.position.y),
+            extents, planeZ);
+        if (paddle != null) paddle.FitTo(extents.x);
     }
 
     public void Show()

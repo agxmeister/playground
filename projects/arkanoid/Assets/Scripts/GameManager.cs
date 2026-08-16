@@ -21,13 +21,19 @@ public class GameManager : MonoBehaviour
     [SerializeField] ScoreBoard scoreBoard;
     [SerializeField] RecordsPanel recordsPanel;
     [SerializeField] MainMenuPanel mainMenuPanel;
-    // The walls and the paddle, switched off while the menu is up. 2D physics
-    // ignores Z, so the playfield's colliders would otherwise fence in the
+    // The round's room, which measures the frame it has been dealt. The brick
+    // grid is laid out against that rather than against a fixed rectangle, since
+    // the field is the whole window now.
+    [SerializeField] Playfield playfield;
+    // The round's room and its paddle, switched off while the menu is up. 2D
+    // physics ignores Z, so the playfield's borders would otherwise fence in the
     // menu's ball even though the menu screen hides them, and both paddles
     // would answer the arrow keys at once.
     [SerializeField] GameObject[] playfieldObjects;
 
     [SerializeField] int rows = 5;
+    // Only used while the playfield has no measured frame to fill; how many
+    // columns actually fit is worked out in BuildLevel.
     [SerializeField] int columns = 8;
     [SerializeField] int startingLives = 3;
 
@@ -61,6 +67,17 @@ public class GameManager : MonoBehaviour
     // starting a round reads as one more step to the right rather than as a
     // different kind of change.
     const float TravelDuration = 0.6f;
+
+    // How much of the frame the brick grid leaves clear either side of itself —
+    // the same breathing space the walled field used to leave, now measured off
+    // the screen's edges instead of off the walls. Only the width is worked out
+    // this way: the camera's field of view is vertical, so the frame is the same
+    // height whatever the window's shape and the rows can stay where they were.
+    const float BrickEdgeMargin = 0.9f;
+
+    // How far below the frame's bottom edge a ball has to fall to be lost. Far
+    // enough that it has plainly gone rather than clipped the boundary.
+    const float BallLostDrop = 0.7f;
 
     State state;
     State endState;
@@ -125,6 +142,12 @@ public class GameManager : MonoBehaviour
             brickHolder = null;
         }
         bricksLeft = 0;
+        // A round's rubble and its ricochet sparks are unparented objects that
+        // outlive whatever spawned them, so they would go on falling over the
+        // menu that replaces the round — the same sweep the menu does on its
+        // way out, now that a round throws sparks off its borders too.
+        Debris.ClearAll();
+        Ricochet.ClearAll();
         // A round abandoned mid-name-entry leaves this subscription behind.
         if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
     }
@@ -138,9 +161,9 @@ public class GameManager : MonoBehaviour
     }
 
     // The round is built first and the view travels to it afterwards, because
-    // the point of the journey is arriving at something: the walls, the bricks
-    // and the paddle are all standing in the playfield's room before the menu
-    // starts sliding out of the frame.
+    // the point of the journey is arriving at something: the bricks and the
+    // paddle are already standing in the playfield's room, and its borders laid
+    // against the frame, before the menu starts sliding out of it.
     void NewGame()
     {
         previousRecord = highScore;
@@ -225,8 +248,20 @@ public class GameManager : MonoBehaviour
         // Two half-width bricks plus the same gap fill one slot exactly:
         // 2 * 0.68 + 0.14 = 1.5, with their centers at slot center ± 0.41.
         const float halfOffset = (width + gap) / 4f;
-        float x0 = -(columns - 1) * (width + gap) / 2f;
+
+        // The field is as wide as the window now, so the grid is cut to fit it
+        // rather than authored: as many whole slots as the frame holds while
+        // keeping BrickEdgeMargin clear either side. The authored count stands
+        // in only while the room has no measured frame to fill.
+        int columnCount = columns;
+        if (playfield != null && playfield.HalfWidth > 0f)
+        {
+            float slot = width + gap;
+            columnCount = Mathf.Max(1,
+                Mathf.FloorToInt((2f * (playfield.HalfWidth - BrickEdgeMargin) + gap) / slot));
+        }
         const float y0 = 4.6f;
+        float x0 = -(columnCount - 1) * (width + gap) / 2f;
 
         for (int row = 0; row < rows; row++)
         {
@@ -235,7 +270,7 @@ public class GameManager : MonoBehaviour
             int hardness = rowHardness[row % rowHardness.Length];
             var color = rowColors[row % rowColors.Length];
 
-            for (int column = 0; column < columns; column++)
+            for (int column = 0; column < columnCount; column++)
             {
                 var slot = new Vector3(x0 + column * (width + gap), y0 - row * (height + gap), 0f);
                 if (kind == BrickKind.Half || kind == BrickKind.Round)
@@ -330,7 +365,7 @@ public class GameManager : MonoBehaviour
                 }
                 break;
             case State.Playing:
-                if (ball.transform.position.y < -7f) OnBallLost();
+                if (ball.transform.position.y < BallLostY) OnBallLost();
                 break;
             case State.EnteringName:
                 bool pressedEnter = keyboard != null
@@ -374,6 +409,12 @@ public class GameManager : MonoBehaviour
         }
         ShowMenu();
     }
+
+    // The bottom edge of the frame is the one side the room is left open on, so
+    // where a ball counts as lost follows it rather than a fixed depth.
+    float BallLostY => playfield != null && playfield.HalfHeight > 0f
+        ? -playfield.HalfHeight - BallLostDrop
+        : -7f;
 
     void OnBallLost()
     {

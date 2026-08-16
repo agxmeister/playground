@@ -7,7 +7,8 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently forty-nine of them, ending with the playable menu screen)
+// (currently fifty-seven of them, ending with the playfield opened out to the
+// frame the way the menu screens always were)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -84,6 +85,15 @@ public static class ArkanoidSetup
     // so this is only about what the camera sees; the plane is what keeps the
     // menu's bricks clear of the backdrop's surface.
     const float MenuPlaneZ = -3.7f;
+    // Where the camera stands and the plane a round is played on. The menu's
+    // plane is nearer the camera than the round's, so the same world size looks
+    // bigger there: everything the player drives on the menu — the paddle and
+    // the ball — is scaled by the ratio of the two depths, and its speed with
+    // it, so a paddle is the same width and a ball crosses the screen at the
+    // same rate whichever screen it is on.
+    const float CameraZ = -13.5f;
+    const float PlayfieldPlaneZ = 0f;
+    const float MenuPlayScale = (MenuPlaneZ - CameraZ) / (PlayfieldPlaneZ - CameraZ);
     // The labelled slabs the arrows replaced.
     const string LegacyMenuOptionStartMeshPath = MeshesFolder + "/MenuOptionStart.asset";
     const string LegacyMenuOptionRecordsMeshPath = MeshesFolder + "/MenuOptionRecords.asset";
@@ -132,22 +142,23 @@ public static class ArkanoidSetup
     static readonly string[] MenuBackLabel = { "MENU" };
     // The paddle simply starts under the middle, between the two arrows.
     const float MenuPaddleRestX = 0f;
-    // How wide the menu room's backdrop is. It has to fill that room's frame —
-    // ~19 units across at 21:9 — and to stop short of the playfield, whose own
-    // backdrop is 17 wide and so reaches out to x -8.5: with the menu room a
-    // screen's width (20) to the left, half of 23 puts the two edge to edge.
-    const float MenuBackdropWidth = 23f;
+    // How wide the menu room's backdrop is: enough to fill that room's frame at
+    // z -3 on any sane aspect ratio (~23 units across at 21:9). It may overhang
+    // the playfield's room freely — the menu is switched off in the same frame
+    // the view arrives there, so the only time this backdrop is ever seen from
+    // outside its own room is on the journey between the two.
+    const float MenuBackdropWidth = 24f;
     // The hall of fame's two lines and the arrows that drive them, a screen's
     // width to the left of the title board inside the slider.
     const float HallNameY = 2.6f;
     const float HallScoreY = 1.1f;
     const float HallArrowY = 1.85f;
     const float MenuPaddleY = -3.6f;
-    // The menu's field is the whole width of the frame, so the paddle can get
-    // under either arrow however far out it stands.
-    const float MenuPaddleXLimit = 7f;
-    // Slower than the playfield's 8: the menu is steered, not fought.
-    const float MenuBallSpeed = 6.5f;
+    // Slower than the playfield's 8: the menu is steered, not fought. Scaled
+    // down with the ball itself, so it is slower on the screen and not just in
+    // world units — the menu's plane covers less ground per unit than the
+    // round's does.
+    const float MenuBallSpeed = 6.5f * MenuPlayScale;
     // Downward tilt of the directional light. Everything in this game casts its
     // shadow onto a surface *behind* it (the playfield backdrop, the menu
     // backdrop), not onto a floor, so the shadow's offset from the object is
@@ -443,8 +454,11 @@ public static class ArkanoidSetup
         }
 
         // Stage 24: persist stage 23, gated on the scene file not yet
-        // referencing the side-wall material asset.
-        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains(AssetDatabase.AssetPathToGUID(WallSideMaterialPath)))
+        // referencing the side-wall material asset — and on there still being
+        // walls to reference it, since stage 56 takes them out of the scene
+        // again and an absence gate would otherwise queue a save every reload.
+        if (leftWall != null
+            && !File.ReadAllText(ToAbsolute(scene.path)).Contains(AssetDatabase.AssetPathToGUID(WallSideMaterialPath)))
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 24: queued scene save for the next editor tick.");
@@ -927,6 +941,136 @@ public static class ArkanoidSetup
             Debug.Log("[ArkanoidSetup] Stage 55: queued scene save for the next editor tick.");
             return;
         }
+
+        // Stage 56: give a round the same screen the menu has always had. The
+        // playfield was a bordered box in the middle of the window — three
+        // masonry walls with the frame's edges well outside them — while the
+        // menu ran the full width with no walls in the picture at all. The
+        // walls go, the room takes a Playfield component that lays invisible
+        // borders along the frame's edges instead, and with them the paddle's
+        // travel, the backdrop's size and the brick grid all follow the window.
+        // Two things the widening displaces come with it: the score and lives
+        // readouts drop to the bottom corners, where the field's new width
+        // leaves no room for them at the top, and the menu's paddle and ball
+        // are scaled to the size a round's are on screen, which the player has
+        // to be able to read as the same object across the two rooms.
+        if (Object.FindAnyObjectByType<Playfield>(FindObjectsInactive.Include) == null)
+        {
+            OpenPlayfieldToTheFrame();
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 56: opened the playfield out to the frame (scene left dirty).");
+            return;
+        }
+
+        // Stage 57: persist stage 56, gated on the walls it took out still
+        // standing in the scene file.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("m_Name: Left"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 57: queued scene save for the next editor tick.");
+            return;
+        }
+    }
+
+    // Stage-56 retrofit. Everything it touches is a scene edit, so it can all
+    // happen in one pass — nothing here is an asset that has to be read back.
+    static void OpenPlayfieldToTheFrame()
+    {
+        var room = FindRootObject("Walls") ?? FindRootObject("Playfield");
+        if (room == null) return;
+        room.name = "Playfield";
+
+        // The masonry walls were the border. The border is the screen's edge
+        // now, and Playfield lays invisible ones along it at runtime.
+        foreach (var wallName in new[] { "Left", "Right", "Top" })
+        {
+            var wall = room.transform.Find(wallName);
+            if (wall != null) Object.DestroyImmediate(wall.gameObject);
+        }
+
+        var backdrop = FindRootObject("Backdrop");
+        var playfieldPaddle = FindRootObject("Paddle");
+        var playfield = room.AddComponent<Playfield>();
+        var playfieldSo = new SerializedObject(playfield);
+        if (backdrop != null)
+            playfieldSo.FindProperty("backdrop").objectReferenceValue = backdrop.transform;
+        if (playfieldPaddle != null)
+            playfieldSo.FindProperty("paddle").objectReferenceValue = playfieldPaddle.GetComponent<Paddle>();
+        playfieldSo.ApplyModifiedPropertiesWithoutUndo();
+
+        // Sized to the frame at runtime; this is only so the Editor shows
+        // something the width of the room rather than of the old box.
+        if (backdrop != null)
+            backdrop.transform.localScale = new Vector3(26f, 14f, backdrop.transform.localScale.z);
+
+        var manager = Object.FindAnyObjectByType<GameManager>();
+        if (manager != null)
+        {
+            var managerSo = new SerializedObject(manager);
+            managerSo.FindProperty("playfield").objectReferenceValue = playfield;
+            managerSo.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        MoveHudReadoutsToTheBottom();
+        ScaleMenuPlayToPlayfieldSize();
+    }
+
+    // The four HUD texts were authored hanging from the top corners, either
+    // side of a field that stopped short of them. Re-anchored to the bottom
+    // ones, at the mirror of the offsets they had.
+    static void MoveHudReadoutsToTheBottom()
+    {
+        var board = Object.FindAnyObjectByType<ScoreBoard>(FindObjectsInactive.Include);
+        if (board == null) return;
+        var hud = board.transform.Find("Hud");
+        if (hud == null) return;
+
+        foreach (var name in new[] { "ScoreCaption", "ScoreValue", "LivesCaption", "LivesValue" })
+        {
+            var readout = hud.Find(name) as RectTransform;
+            if (readout == null) continue;
+            bool caption = name.EndsWith("Caption");
+            float anchorX = name.StartsWith("Score") ? 0f : 1f;
+            readout.anchorMin = readout.anchorMax = readout.pivot = new Vector2(anchorX, 0f);
+            readout.anchoredPosition = new Vector2(anchorX == 0f ? 40f : -40f,
+                caption ? ReadoutCaptionY : ReadoutValueY);
+            var text = readout.GetComponent<Text>();
+            if (text != null)
+                text.alignment = anchorX == 0f ? TextAnchor.LowerLeft : TextAnchor.LowerRight;
+        }
+    }
+
+    // The menu's plane stands nearer the camera than a round's, so its paddle
+    // and ball were authored the same world size and came out bigger on screen.
+    // Scaled by the ratio of the two depths they read as the same objects, and
+    // the ball's speed goes with them so it still crosses the menu's screen at
+    // the gentler rate it was given.
+    static void ScaleMenuPlayToPlayfieldSize()
+    {
+        var menu = Object.FindAnyObjectByType<MainMenuPanel>(FindObjectsInactive.Include);
+        if (menu == null) return;
+
+        var menuPaddle = menu.transform.Find("MenuPlay/MenuPaddle");
+        if (menuPaddle != null) menuPaddle.localScale = Vector3.one * MenuPlayScale;
+
+        var menuBall = menu.transform.Find("MenuPlay/MenuBall");
+        if (menuBall != null)
+        {
+            var ballPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BallPrefabPath);
+            if (ballPrefab != null)
+                menuBall.localScale = ballPrefab.transform.localScale * MenuPlayScale;
+            var ballSo = new SerializedObject(menuBall.GetComponent<Ball>());
+            ballSo.FindProperty("speed").floatValue = MenuBallSpeed;
+            ballSo.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        // Wide enough to cover its own room's frame; it may overhang the
+        // playfield's freely, since the menu is switched off the moment the
+        // view arrives there.
+        var menuBackdrop = menu.transform.Find("MenuBackdrop");
+        if (menuBackdrop != null)
+            menuBackdrop.localScale = new Vector3(
+                MenuBackdropWidth, menuBackdrop.localScale.y, menuBackdrop.localScale.z);
     }
 
     static string MenuLetterMeshPath(int index) => $"{MenuLettersMeshFolder}/Letter{index}.asset";
@@ -1550,7 +1694,10 @@ public static class ArkanoidSetup
             camera.backgroundColor = new Color(0.06f, 0.08f, 0.13f);
         }
 
-        var walls = new GameObject("Walls");
+        // The round's room. Its three walls are visible boxes here and stay that
+        // way through the stages that texture and re-mesh them; stage 56 is
+        // where they go, and the room's border becomes the frame itself.
+        var walls = new GameObject("Playfield");
         var wallColor = new Color(0.35f, 0.38f, 0.45f);
         // Side walls butt against the top wall's underside (y 5.5) instead of
         // overlapping it: coplanar overlap z-fights, and anything taller than
@@ -1598,8 +1745,8 @@ public static class ArkanoidSetup
         // The readouts hang off a Hud child so the whole HUD can be hidden for
         // the menu while the panels on this canvas stay usable.
         var hud = CreateFullScreenChild(canvasGo.transform, "Hud");
-        var scoreValue = CreateReadout(hud.transform, "Score", "SCORE", 0f, 40f, TextAnchor.UpperLeft, font);
-        var livesValue = CreateReadout(hud.transform, "Lives", "LIVES", 1f, -40f, TextAnchor.UpperRight, font);
+        var scoreValue = CreateReadout(hud.transform, "Score", "SCORE", 0f, 40f, TextAnchor.LowerLeft, font);
+        var livesValue = CreateReadout(hud.transform, "Lives", "LIVES", 1f, -40f, TextAnchor.LowerRight, font);
 
         var boardSo = new SerializedObject(board);
         boardSo.FindProperty("hud").objectReferenceValue = hud;
@@ -1781,9 +1928,14 @@ public static class ArkanoidSetup
         var play = new GameObject("MenuPlay");
         play.transform.SetParent(root.transform, false);
 
+        // Scaled down by the ratio of the two planes' depths, so the menu's
+        // paddle is exactly as wide on screen as the one a round is played with
+        // even though it stands nearer the camera. The collider is authored at
+        // full size and scales with the transform, as does the ball's.
         var paddleGo = new GameObject("MenuPaddle");
         paddleGo.transform.SetParent(play.transform, false);
         paddleGo.transform.localPosition = new Vector3(MenuPaddleRestX, MenuPaddleY, MenuPlaneZ);
+        paddleGo.transform.localScale = Vector3.one * MenuPlayScale;
         paddleGo.AddComponent<MeshFilter>().sharedMesh = paddleMesh;
         paddleGo.AddComponent<MeshRenderer>().sharedMaterial = paddleMaterial;
         var menuPaddleCollider = paddleGo.AddComponent<BoxCollider2D>();
@@ -1791,15 +1943,15 @@ public static class ArkanoidSetup
             PaddleWidth - 2f * PaddleCornerRadius, PaddleHeight - 2f * PaddleCornerRadius);
         menuPaddleCollider.edgeRadius = PaddleCornerRadius;
         paddleGo.AddComponent<Rigidbody2D>().bodyType = RigidbodyType2D.Kinematic;
+        // How far it may travel is measured off the frame at runtime, so there
+        // is no limit to author: the menu's field is the whole window.
         var menuPaddle = paddleGo.AddComponent<Paddle>();
-        var paddleSo = new SerializedObject(menuPaddle);
-        paddleSo.FindProperty("xLimit").floatValue = MenuPaddleXLimit;
-        paddleSo.ApplyModifiedPropertiesWithoutUndo();
 
         var ballGo = (GameObject)PrefabUtility.InstantiatePrefab(ballPrefab);
         ballGo.name = "MenuBall";
         ballGo.transform.SetParent(play.transform, false);
         ballGo.transform.localPosition = new Vector3(MenuPaddleRestX, MenuPaddleY + 0.5f, MenuPlaneZ);
+        ballGo.transform.localScale = ballPrefab.transform.localScale * MenuPlayScale;
         var menuBall = ballGo.GetComponent<Ball>();
         var ballSo = new SerializedObject(menuBall);
         ballSo.FindProperty("speed").floatValue = MenuBallSpeed;
@@ -1819,7 +1971,7 @@ public static class ArkanoidSetup
         var managerSo = new SerializedObject(manager);
         managerSo.FindProperty("mainMenuPanel").objectReferenceValue = menu;
         SetObjectArray(managerSo, "playfieldObjects",
-            new Object[] { FindRootObject("Walls"), FindRootObject("Paddle") });
+            new Object[] { FindRootObject("Playfield"), FindRootObject("Paddle") });
         managerSo.ApplyModifiedPropertiesWithoutUndo();
 
         root.SetActive(false);
@@ -1911,13 +2063,24 @@ public static class ArkanoidSetup
         return null;
     }
 
-    // Builds a caption ("SCORE") with a value line under it, anchored to the top
-    // edge of the canvas, and returns the value Text for runtime updates.
+    // Builds a caption ("SCORE") with a value line under it and returns the
+    // value Text for runtime updates.
+    //
+    // Both readouts hang off the bottom corners of the screen. They used to sit
+    // in the top ones, either side of a field that stopped well short of them;
+    // the field is the whole window now, and the top of it is where the bricks
+    // are, so the caption and its value were dropped to the one strip of screen
+    // a round has nothing standing in.
     static Text CreateReadout(Transform parent, string name, string caption, float anchorX, float offsetX, TextAnchor alignment, Font font)
     {
-        CreateText(parent, name + "Caption", caption, 26, new Vector2(anchorX, 1f), new Vector2(offsetX, -20f), alignment, font, new Color(0.62f, 0.66f, 0.75f));
-        return CreateText(parent, name + "Value", "0", 42, new Vector2(anchorX, 1f), new Vector2(offsetX, -52f), alignment, font, Color.white);
+        CreateText(parent, name + "Caption", caption, 26, new Vector2(anchorX, 0f), new Vector2(offsetX, ReadoutCaptionY), alignment, font, new Color(0.62f, 0.66f, 0.75f));
+        return CreateText(parent, name + "Value", "0", 42, new Vector2(anchorX, 0f), new Vector2(offsetX, ReadoutValueY), alignment, font, Color.white);
     }
+
+    // Where the two lines of a readout stand above the bottom edge, the mirror
+    // of the 20/52 they hung below the top one.
+    const float ReadoutCaptionY = 70f;
+    const float ReadoutValueY = 20f;
 
     static Text CreateText(Transform parent, string name, string content, int fontSize, Vector2 anchor, Vector2 offset, TextAnchor alignment, Font font, Color color)
     {
