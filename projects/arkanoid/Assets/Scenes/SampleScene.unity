@@ -1346,7 +1346,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::HallOfFame
   nameLine: {fileID: 1089872101}
   scoreLine: {fileID: 1051978273}
-  nextOption: {fileID: 914949708}
+  prevOption: {fileID: 914949708}
 --- !u!4 &457740596
 Transform:
   m_ObjectHideFlags: 0
@@ -2809,7 +2809,7 @@ GameObject:
   - component: {fileID: 914949710}
   - component: {fileID: 914949709}
   m_Layer: 0
-  m_Name: OptionNext
+  m_Name: OptionPrev
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2966,7 +2966,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 914949708}
-  m_Mesh: {fileID: 4300000, guid: c7a5435bcc29d459fba0aecec5b6de5b, type: 2}
+  m_Mesh: {fileID: 4300000, guid: 5696e541d3cea467bb82a0ddb006fdb9, type: 2}
 --- !u!4 &914949713
 Transform:
   m_ObjectHideFlags: 0
@@ -4571,7 +4571,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1575383007}
-  m_Mesh: {fileID: 4300000, guid: a3e21e4290f7545959a5cb0d9f8cb212, type: 2}
+  m_Mesh: {fileID: 4300000, guid: 582afa50286134245b944f34bbfc314b, type: 2}
 --- !u!1 &1607270415
 GameObject:
   m_ObjectHideFlags: 0

@@ -3,7 +3,11 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 
-public enum MainMenuOption { StartGame, HallOfFame, NextChampion, BackToMenu }
+// The order is what the scene stores — a serialized enum is an index — so
+// members are renamed in place and never reordered. PreviousRecord went up as
+// NextChampion, back when the hall cycled its names instead of walking down
+// through them.
+public enum MainMenuOption { StartGame, HallOfFame, PreviousRecord, BackToMenu }
 
 // The title screen — a small playable scene rather than a UI panel. The
 // component sits on the MenuScreen root itself (see "The main menu screen" in
@@ -193,7 +197,7 @@ public class MainMenuPanel : MonoBehaviour
         if (busy) return false;
         // An arrow belonging to the screen that isn't up can't be picked. Both
         // screens live in the scene at once, and only the slide separates them.
-        if (showingHall != (option == MainMenuOption.NextChampion || option == MainMenuOption.BackToMenu))
+        if (showingHall != (option == MainMenuOption.PreviousRecord || option == MainMenuOption.BackToMenu))
             return false;
         busy = true;
         StartCoroutine(CarryOut(option));
@@ -232,12 +236,13 @@ public class MainMenuPanel : MonoBehaviour
                 RestoreBoard(title != null ? title.parent : null);
                 yield return ChangeTo(false);
                 break;
-            case MainMenuOption.NextChampion:
+            case MainMenuOption.PreviousRecord:
                 // The champion doesn't change on the spot either: the plaque
                 // makes the same change these boards do, the champion being
                 // left behind travelling out of the frame the way the arrow
-                // that was hit points and the next one arriving under the
-                // plane, rather than one of them blinking into the other.
+                // that was hit points and the record before theirs arriving
+                // under the plane, rather than one of them blinking into the
+                // other.
                 if (hall != null) yield return hall.Advance(ball);
                 break;
         }
@@ -383,13 +388,16 @@ public class MainMenuPanel : MonoBehaviour
             block.gameObject.SetActive(true);
         foreach (var arrow in board.GetComponentsInChildren<MenuOption>(true))
             arrow.gameObject.SetActive(true);
-        // ...except the "next champion" arrow when there is nobody else to show.
+        // ...except the "previous record" arrow when the plaque has reached the
+        // bottom of the book, or the book is empty.
         if (hall != null) hall.RefreshOptions();
     }
 
     // The arrow that carried out a choice, put back on its own. It shattered to
     // make the choice, and without it the board it belongs to has one fewer way
-    // out than it was built with.
+    // out than it was built with — unless it is the hall's own arrow and the
+    // plaque it led to is the last record, which RefreshOptions puts back down
+    // in the same breath.
     void RestoreOption(MainMenuOption option)
     {
         if (slider == null) return;
@@ -408,9 +416,9 @@ public class MainMenuPanel : MonoBehaviour
         if (slider == null) return;
         foreach (var option in slider.GetComponentsInChildren<MenuOption>(true))
             option.gameObject.SetActive(true);
-        // ...except the one the hall of fame itself hides when there is no
-        // second champion to advance to. Its own state is left alone: the
-        // champion just advanced to must not be reset back to the first.
+        // ...except the one the hall of fame itself hides when the plaque has
+        // no older record to walk back to. Its own state is left alone: the
+        // record just walked back to must not be reset to the top of the book.
         if (hall != null) hall.RefreshOptions();
     }
 }

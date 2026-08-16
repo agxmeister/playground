@@ -109,16 +109,23 @@ public static class ArkanoidSetup
     const string LegacyMenuLabelHallMeshPath = MeshesFolder + "/MenuLabelHall.asset";
     const string LegacyMenuLabelNextMeshPath = MeshesFolder + "/MenuLabelNext.asset";
     const string LegacyMenuLabelBackMeshPath = MeshesFolder + "/MenuLabelBack.asset";
+    // The hall's own arrow when it read NEXT and the plaque cycled its names.
+    // It walks down the book now and the arrow says PREV, which is a different
+    // word in the same banner: new meshes at new paths, so the change is a
+    // rebuild the size checks can see rather than a silent rewrite of a mesh
+    // that would look identical to them.
+    const string LegacyMenuArrowNextMeshPath = MeshesFolder + "/MenuArrowNext.asset";
+    const string LegacyMenuInlayNextMeshPath = MeshesFolder + "/MenuInlayNext.asset";
     // An arrow carries the pocket its own lettering is set into, so there is one
     // mesh per option rather than one per direction — and one block of white
     // lettering per option to seat in it.
     const string MenuArrowStartMeshPath = MeshesFolder + "/MenuArrowStart.asset";
     const string MenuArrowHallMeshPath = MeshesFolder + "/MenuArrowHall.asset";
-    const string MenuArrowNextMeshPath = MeshesFolder + "/MenuArrowNext.asset";
+    const string MenuArrowPrevMeshPath = MeshesFolder + "/MenuArrowPrev.asset";
     const string MenuArrowBackMeshPath = MeshesFolder + "/MenuArrowBack.asset";
     const string MenuInlayStartMeshPath = MeshesFolder + "/MenuInlayStart.asset";
     const string MenuInlayHallMeshPath = MeshesFolder + "/MenuInlayHall.asset";
-    const string MenuInlayNextMeshPath = MeshesFolder + "/MenuInlayNext.asset";
+    const string MenuInlayPrevMeshPath = MeshesFolder + "/MenuInlayPrev.asset";
     const string MenuInlayBackMeshPath = MeshesFolder + "/MenuInlayBack.asset";
     const string MenuOptionStartMaterialPath = MaterialsFolder + "/MenuOptionStart.mat";
     const string MenuOptionRecordsMaterialPath = MaterialsFolder + "/MenuOptionRecords.mat";
@@ -174,7 +181,7 @@ public static class ArkanoidSetup
     // Two lines: HALL OF FAME across one would be either wider than the banner
     // or too small to read.
     static readonly string[] MenuHallLabel = { "HALL OF", "FAME" };
-    static readonly string[] MenuNextLabel = { "NEXT" };
+    static readonly string[] MenuPrevLabel = { "PREV" };
     static readonly string[] MenuBackLabel = { "MENU" };
     // The paddle simply starts under the middle, between the two arrows.
     const float MenuPaddleRestX = 0f;
@@ -784,6 +791,40 @@ public static class ArkanoidSetup
             return;
         }
 
+        // Stage 77: rename the hall's arrow from OptionNext to OptionPrev. It
+        // used to fetch the next champion in a cycle and now walks back through
+        // the records one at a time, so the name it was authored under says the
+        // wrong thing about it.
+        //
+        // **It is numbered with the stages it arrived alongside but stands here
+        // on purpose**, ahead of stage 40 rather than at the end of the list:
+        // stage 40 is about to write the arrow's re-lettered meshes and delete
+        // the ones it holds, and stage 70 puts those back by looking the object
+        // up under its path (see MenuMeshes). Left until after them, the rename
+        // would move the object out from under that path in the one window
+        // where its mesh reference is null — a renderer with no mesh and no
+        // stage able to find it again.
+        var namedMenu = FindRootObject("MenuScreen");
+        var legacyNextOption = namedMenu != null
+            ? namedMenu.transform.Find("MenuSlider/MenuHall/OptionNext")
+            : null;
+        if (legacyNextOption != null)
+        {
+            legacyNextOption.name = "OptionPrev";
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 77: renamed the hall's arrow to OptionPrev (scene left dirty).");
+            return;
+        }
+
+        // Stage 78: persist stage 77, gated on the scene file still knowing the
+        // arrow under its old name.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("m_Name: OptionNext"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 78: queued scene save for the next editor tick.");
+            return;
+        }
+
         // Stages 40-43 build the main menu screen: the ARKANOID word as
         // brick-textured blocks in front of an opaque backdrop, plus the
         // playable half — option slabs, paddle and ball — that the player
@@ -808,6 +849,9 @@ public static class ArkanoidSetup
             || MeshWidthDiffers(MenuLetterMeshPath(0), BlockText.GlyphWidth * MenuTitleCell);
         bool arrowsStale = !File.Exists(ToAbsolute(MenuArrowStartMeshPath))
             || !File.Exists(ToAbsolute(MenuInlayStartMeshPath))
+            // The hall's arrow re-lettered from NEXT to PREV: same banner, same
+            // width, so only the path it is written to says it has changed.
+            || !File.Exists(ToAbsolute(MenuArrowPrevMeshPath))
             || MeshWidthDiffers(MenuArrowStartMeshPath, ArrowOutlineWidth());
         if (lettersStale || arrowsStale)
         {
@@ -825,11 +869,11 @@ public static class ArkanoidSetup
             {
                 CreateArrowMesh("MenuArrowStart", true, MenuStartLabel, MenuArrowStartMeshPath);
                 CreateArrowMesh("MenuArrowHall", false, MenuHallLabel, MenuArrowHallMeshPath);
-                CreateArrowMesh("MenuArrowNext", false, MenuNextLabel, MenuArrowNextMeshPath);
+                CreateArrowMesh("MenuArrowPrev", false, MenuPrevLabel, MenuArrowPrevMeshPath);
                 CreateArrowMesh("MenuArrowBack", true, MenuBackLabel, MenuArrowBackMeshPath);
                 CreateInlayMesh("MenuInlayStart", MenuStartLabel, MenuInlayStartMeshPath);
                 CreateInlayMesh("MenuInlayHall", MenuHallLabel, MenuInlayHallMeshPath);
-                CreateInlayMesh("MenuInlayNext", MenuNextLabel, MenuInlayNextMeshPath);
+                CreateInlayMesh("MenuInlayPrev", MenuPrevLabel, MenuInlayPrevMeshPath);
                 CreateInlayMesh("MenuInlayBack", MenuBackLabel, MenuInlayBackMeshPath);
             }
             AssetDatabase.DeleteAsset(LegacyMenuTitleMeshPath);
@@ -842,6 +886,8 @@ public static class ArkanoidSetup
             AssetDatabase.DeleteAsset(LegacyMenuLabelHallMeshPath);
             AssetDatabase.DeleteAsset(LegacyMenuLabelNextMeshPath);
             AssetDatabase.DeleteAsset(LegacyMenuLabelBackMeshPath);
+            AssetDatabase.DeleteAsset(LegacyMenuArrowNextMeshPath);
+            AssetDatabase.DeleteAsset(LegacyMenuInlayNextMeshPath);
             Debug.Log("[ArkanoidSetup] Stage 40: created the menu block meshes.");
             return;
         }
@@ -1283,7 +1329,7 @@ public static class ArkanoidSetup
         {
             EngraveOption(engravedMenu.transform, "MenuSlider/MenuBoard/OptionStart", MenuArrowStartMeshPath);
             EngraveOption(engravedMenu.transform, "MenuSlider/MenuBoard/OptionRecords", MenuArrowHallMeshPath);
-            EngraveOption(engravedMenu.transform, "MenuSlider/MenuHall/OptionNext", MenuArrowNextMeshPath);
+            EngraveOption(engravedMenu.transform, "MenuSlider/MenuHall/OptionPrev", MenuArrowPrevMeshPath);
             EngraveOption(engravedMenu.transform, "MenuSlider/MenuHall/OptionBack", MenuArrowBackMeshPath);
             EditorSceneManager.MarkSceneDirty(scene);
             Debug.Log("[ArkanoidSetup] Stage 68: engraved the option arrows (scene left dirty).");
@@ -1313,8 +1359,8 @@ public static class ArkanoidSetup
                 MenuInlayStartMeshPath, true, inlayMaterial);
             InlayOption(inlaidMenu.transform, "MenuSlider/MenuBoard/OptionRecords",
                 MenuInlayHallMeshPath, false, inlayMaterial);
-            InlayOption(inlaidMenu.transform, "MenuSlider/MenuHall/OptionNext",
-                MenuInlayNextMeshPath, false, inlayMaterial);
+            InlayOption(inlaidMenu.transform, "MenuSlider/MenuHall/OptionPrev",
+                MenuInlayPrevMeshPath, false, inlayMaterial);
             InlayOption(inlaidMenu.transform, "MenuSlider/MenuHall/OptionBack",
                 MenuInlayBackMeshPath, true, inlayMaterial);
             EditorSceneManager.MarkSceneDirty(scene);
@@ -1424,11 +1470,11 @@ public static class ArkanoidSetup
     {
         ("MenuSlider/MenuBoard/OptionStart", MenuArrowStartMeshPath),
         ("MenuSlider/MenuBoard/OptionRecords", MenuArrowHallMeshPath),
-        ("MenuSlider/MenuHall/OptionNext", MenuArrowNextMeshPath),
+        ("MenuSlider/MenuHall/OptionPrev", MenuArrowPrevMeshPath),
         ("MenuSlider/MenuHall/OptionBack", MenuArrowBackMeshPath),
         ("MenuSlider/MenuBoard/OptionStart/ArrowInlay", MenuInlayStartMeshPath),
         ("MenuSlider/MenuBoard/OptionRecords/ArrowInlay", MenuInlayHallMeshPath),
-        ("MenuSlider/MenuHall/OptionNext/ArrowInlay", MenuInlayNextMeshPath),
+        ("MenuSlider/MenuHall/OptionPrev/ArrowInlay", MenuInlayPrevMeshPath),
         ("MenuSlider/MenuHall/OptionBack/ArrowInlay", MenuInlayBackMeshPath),
     };
 
@@ -2676,8 +2722,8 @@ public static class ArkanoidSetup
     }
 
     // The hall of fame screen: a champion's name over their score, with the
-    // arrow to the next champion on the left and the way back to the menu on
-    // the right. Both lines are empty here — the names are only known at
+    // arrow to the record before theirs on the left and the way back to the
+    // menu on the right. Both lines are empty here — the names are only known at
     // runtime, so HallOfFame builds their meshes itself.
     //
     // It sits a screen's width to the *left* of the board, so that the
@@ -2692,9 +2738,9 @@ public static class ArkanoidSetup
 
         var nameLine = CreateChampionLine(hall.transform, "ChampionName", HallNameY, nameMaterial);
         var scoreLine = CreateChampionLine(hall.transform, "ChampionScore", HallScoreY, scoreMaterial);
-        var next = CreateArrowOption(hall.transform, "OptionNext", MainMenuOption.NextChampion,
-            -MenuArrowX, HallArrowY, false, MenuOptionRecordsMaterialPath, MenuArrowNextMeshPath,
-            MenuInlayNextMeshPath, scoreMaterial);
+        var previous = CreateArrowOption(hall.transform, "OptionPrev", MainMenuOption.PreviousRecord,
+            -MenuArrowX, HallArrowY, false, MenuOptionRecordsMaterialPath, MenuArrowPrevMeshPath,
+            MenuInlayPrevMeshPath, scoreMaterial);
         CreateArrowOption(hall.transform, "OptionBack", MainMenuOption.BackToMenu,
             MenuArrowX, HallArrowY, true, MenuOptionStartMaterialPath, MenuArrowBackMeshPath,
             MenuInlayBackMeshPath, scoreMaterial);
@@ -2702,7 +2748,7 @@ public static class ArkanoidSetup
         var hallSo = new SerializedObject(component);
         hallSo.FindProperty("nameLine").objectReferenceValue = nameLine;
         hallSo.FindProperty("scoreLine").objectReferenceValue = scoreLine;
-        hallSo.FindProperty("nextOption").objectReferenceValue = next;
+        hallSo.FindProperty("prevOption").objectReferenceValue = previous;
         hallSo.ApplyModifiedPropertiesWithoutUndo();
     }
 
