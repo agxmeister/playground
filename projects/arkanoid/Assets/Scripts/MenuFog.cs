@@ -2,7 +2,9 @@ using UnityEngine;
 
 // One bank of the fog a menu screen rises out of (see "A screen change happens
 // in depth" in CLAUDE.md): a sheet of haze hanging in the shallow space between
-// the playing plane and the backdrop, drifting slowly across it.
+// the playing plane and the backdrop, drifting slowly across it. The round's
+// room hangs two of these as well — a round is a continuation of the menu
+// screens, so it stands in the same weather.
 //
 // The fog was a colour before this and nothing else — the backdrop's, mixed
 // into a screen by how deep it stood. That is still what a sinking screen wears,

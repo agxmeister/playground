@@ -23,6 +23,12 @@ public class Playfield : MonoBehaviour
     // rather than parented: it stays lit and standing while the room's colliders
     // are switched off for the menu.
     [SerializeField] Transform backdrop;
+    // The banks of haze drifting between the plane and that backdrop — the same
+    // weather the menu's room has, because a round is a continuation of the menu
+    // screens rather than a different place. Scenery like the backdrop, and
+    // sized like it: each covers the frame at its own depth, so its edges are
+    // never seen whatever shape the window takes.
+    [SerializeField] Transform[] fogBanks;
     [SerializeField] Paddle paddle;
 
     // How far past the frame's edges the backdrop is drawn, so its own edge is
@@ -73,6 +79,20 @@ public class Playfield : MonoBehaviour
                 2f * behind.x + BackdropOverhang,
                 2f * behind.y + BackdropOverhang,
                 backdrop.localScale.z);
+        }
+
+        // The haze hangs at its own depths too, and a bank whose edge crept
+        // into a corner would give the weather away as a sheet.
+        if (fogBanks != null)
+        {
+            foreach (var bank in fogBanks)
+            {
+                if (bank == null) continue;
+                var inFog = Border.FrameExtents(camera, bank.position.z);
+                bank.localScale = new Vector3(
+                    2f * inFog.x + BackdropOverhang,
+                    2f * inFog.y + BackdropOverhang, 1f);
+            }
         }
 
         if (paddle != null) paddle.FitTo(extents.x);

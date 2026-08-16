@@ -205,6 +205,21 @@ public static class ArkanoidSetup
     // menu is always in front of its own weather.
     const float MenuFogFarDepth = 0.42f;
     const float MenuFogNearDepth = 0.3f;
+    // The round's room stands in the same fog — a round is a continuation of
+    // the menu screens — so its backdrop is the same wall at the same gap:
+    // front face ScreenChange.FogWall behind the playing plane, centre half its
+    // own depth further back. The shadows a round throws come out the same
+    // length as the menu's for it.
+    const float PlayfieldBackdropDepth = 0.2f;
+    const float PlayfieldBackdropZ =
+        PlayfieldPlaneZ + ScreenChange.FogWall + PlayfieldBackdropDepth / 2f;
+    // The round's own banks of haze hang deeper than the menu's 0.42 and 0.3:
+    // the thickest thing on the menu's plane is an option arrow at a quarter of
+    // a unit of half-depth, but a brick carries 0.3, so the menu's near bank
+    // would lie exactly on every brick's back face. Between that and the wall
+    // at 0.55 there is less room, and these two share it.
+    const float PlayfieldFogFarDepth = 0.46f;
+    const float PlayfieldFogNearDepth = 0.37f;
     // The hall of fame's two lines and the arrows that drive them, a screen's
     // width to the left of the title board inside the slider. The lines stand
     // 1.75 apart rather than the 1.5 they were authored at, so the name's
@@ -217,11 +232,17 @@ public static class ArkanoidSetup
     const float HallScoreY = 1f;
     const float HallArrowY = 1.85f;
     const float MenuPaddleY = -3.6f;
-    // Slower than the playfield's 8: the menu is steered, not fought. Scaled
-    // down with the ball itself, so it is slower on the screen and not just in
-    // world units — the menu's plane covers less ground per unit than the
-    // round's does.
-    const float MenuBallSpeed = 6.5f * MenuPlayScale;
+    // What Ball.cs authors as its default, which is what the ball prefab — and
+    // so every round — plays at. The menu's ball takes the same rate: it was
+    // given a gentler 6.5 for a while, on the theory that the menu is steered
+    // rather than fought, and the seam showed — a round is a continuation of
+    // the menu screens, and a ball that picks up speed on the way into one says
+    // they are two different games.
+    const float PlayfieldBallSpeed = 8f;
+    // Scaled down with the ball itself, so it is the same speed on the screen
+    // and not merely in world units — the menu's plane covers less ground per
+    // unit than the round's does.
+    const float MenuBallSpeed = PlayfieldBallSpeed * MenuPlayScale;
     // Downward tilt of the directional light. Everything in this game casts its
     // shadow onto a surface *behind* it (the playfield backdrop, the menu
     // backdrop), not onto a floor, so the shadow's offset from the object is
@@ -1230,10 +1251,12 @@ public static class ArkanoidSetup
         {
             var hazeMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuFogMaterialPath);
             if (hazeMaterial == null) return;
-            CreateFogBank(fogRoom.transform, "MenuFogFar", MenuFogFarDepth,
-                new Vector2(1.7f, 1.45f), new Vector2(0.01f, 0.004f), hazeMaterial);
-            CreateFogBank(fogRoom.transform, "MenuFogNear", MenuFogNearDepth,
-                new Vector2(2.6f, 2.2f), new Vector2(-0.007f, 0.005f), hazeMaterial);
+            CreateFogBank(fogRoom.transform, "MenuFogFar", MenuPlaneZ + MenuFogFarDepth,
+                new Vector2(1.7f, 1.45f), new Vector2(0.01f, 0.004f), hazeMaterial,
+                new Vector2(MenuBackdropWidth, 24f));
+            CreateFogBank(fogRoom.transform, "MenuFogNear", MenuPlaneZ + MenuFogNearDepth,
+                new Vector2(2.6f, 2.2f), new Vector2(-0.007f, 0.005f), hazeMaterial,
+                new Vector2(MenuBackdropWidth, 24f));
             EditorSceneManager.MarkSceneDirty(scene);
             Debug.Log("[ArkanoidSetup] Stage 66: hung the menu's banks of haze (scene left dirty).");
             return;
@@ -1306,6 +1329,91 @@ public static class ArkanoidSetup
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 73: queued scene save for the next editor tick.");
             return;
+        }
+
+        // Stage 74: stand the round's room in the menu's fog. A round is a
+        // continuation of the menu screens, so the space behind its plane
+        // becomes the same space the menu's is: the backdrop moves in to the
+        // fog wall's gap and puts on the fog's own material — matte, the murk's
+        // colour, shared with the menu's wall so the two rooms can never drift
+        // apart — and two banks of haze go up in front of it, root scenery like
+        // the backdrop itself, standing while the room's colliders are off so
+        // the weather is already there when the camera travels in. Playfield
+        // takes their reins to size each to the frame at its own depth.
+        if (FindRootObject("PlayfieldFogFar") == null)
+        {
+            var roundHazeMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuFogMaterialPath);
+            var fogWallMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuBackdropMaterialPath);
+            if (roundHazeMaterial == null || fogWallMaterial == null) return;
+
+            var roundBackdrop = FindRootObject("Backdrop");
+            if (roundBackdrop != null)
+            {
+                var at = roundBackdrop.transform.position;
+                roundBackdrop.transform.position = new Vector3(at.x, at.y, PlayfieldBackdropZ);
+                roundBackdrop.transform.localScale = new Vector3(
+                    roundBackdrop.transform.localScale.x,
+                    roundBackdrop.transform.localScale.y, PlayfieldBackdropDepth);
+                roundBackdrop.GetComponent<MeshRenderer>().sharedMaterial = fogWallMaterial;
+            }
+
+            // Sized to the frame at runtime; authored generously so nothing
+            // shows an edge before the first fit.
+            var farBank = CreateFogBank(null, "PlayfieldFogFar",
+                PlayfieldPlaneZ + PlayfieldFogFarDepth,
+                new Vector2(1.4f, 0.8f), new Vector2(0.01f, 0.004f),
+                roundHazeMaterial, new Vector2(32f, 16f));
+            var nearBank = CreateFogBank(null, "PlayfieldFogNear",
+                PlayfieldPlaneZ + PlayfieldFogNearDepth,
+                new Vector2(2.1f, 1.2f), new Vector2(-0.007f, 0.005f),
+                roundHazeMaterial, new Vector2(32f, 16f));
+
+            var foggedRoom = Object.FindAnyObjectByType<Playfield>(FindObjectsInactive.Include);
+            if (foggedRoom != null)
+            {
+                var roomSo = new SerializedObject(foggedRoom);
+                var banks = roomSo.FindProperty("fogBanks");
+                banks.arraySize = 2;
+                banks.GetArrayElementAtIndex(0).objectReferenceValue = farBank.transform;
+                banks.GetArrayElementAtIndex(1).objectReferenceValue = nearBank.transform;
+                roomSo.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 74: stood the round's room in the fog (scene left dirty).");
+            return;
+        }
+
+        // Stage 75: persist stage 74, gated on the scene file not yet knowing
+        // about the banks it hung.
+        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains("m_Name: PlayfieldFogFar"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 75: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 76: pace the menu's ball to the round's. It was authored at a
+        // gentler 6.5 against the round's 8, and the seam showed on the way in.
+        // The guard is the serialized speed itself — a reliable in-memory fact —
+        // so the save rides the same tick rather than a disk-side gate: a bare
+        // float in the scene file is nothing to grep for.
+        var pacedMenu = Object.FindAnyObjectByType<MainMenuPanel>(FindObjectsInactive.Include);
+        var pacedBall = pacedMenu != null
+            ? pacedMenu.transform.Find("MenuPlay/MenuBall") : null;
+        if (pacedBall != null && pacedBall.GetComponent<Ball>() != null)
+        {
+            var pacedSo = new SerializedObject(pacedBall.GetComponent<Ball>());
+            var pacedSpeed = pacedSo.FindProperty("speed");
+            if (Mathf.Abs(pacedSpeed.floatValue - MenuBallSpeed) > 0.001f)
+            {
+                pacedSpeed.floatValue = MenuBallSpeed;
+                pacedSo.ApplyModifiedPropertiesWithoutUndo();
+                EditorSceneManager.MarkSceneDirty(scene);
+                EditorApplication.update += SaveSceneOnce;
+                Debug.Log("[ArkanoidSetup] Stage 76: paced the menu's ball to the round's (save queued).");
+                return;
+            }
         }
     }
 
@@ -1387,8 +1495,10 @@ public static class ArkanoidSetup
     // One sheet of drifting haze, as wide as the backdrop it hangs in front of
     // so its own edges are never in the frame. A quad rather than a box: it has
     // no thickness to show, and nothing is ever behind it but the backdrop.
-    static void CreateFogBank(Transform room, string name, float depth,
-        Vector2 tiling, Vector2 drift, Material material)
+    // The room is the menu's screen root, or nothing at all for the round's
+    // banks, which are root scenery like the backdrop they hang in front of.
+    static GameObject CreateFogBank(Transform room, string name, float z,
+        Vector2 tiling, Vector2 drift, Material material, Vector2 size)
     {
         var bank = GameObject.CreatePrimitive(PrimitiveType.Quad);
         bank.name = name;
@@ -1396,8 +1506,8 @@ public static class ArkanoidSetup
         // do no harm, but a sheet of weather is not something to run into.
         Object.DestroyImmediate(bank.GetComponent<Collider>());
         bank.transform.SetParent(room, false);
-        bank.transform.localPosition = new Vector3(0f, 0f, MenuPlaneZ + depth);
-        bank.transform.localScale = new Vector3(MenuBackdropWidth, 24f, 1f);
+        bank.transform.localPosition = new Vector3(0f, 0f, z);
+        bank.transform.localScale = new Vector3(size.x, size.y, 1f);
 
         var sheet = bank.GetComponent<MeshRenderer>();
         sheet.sharedMaterial = material;
@@ -1410,6 +1520,7 @@ public static class ArkanoidSetup
         fogSo.FindProperty("tiling").vector2Value = tiling;
         fogSo.FindProperty("drift").vector2Value = drift;
         fogSo.ApplyModifiedPropertiesWithoutUndo();
+        return bank;
     }
 
     // Stage-56 retrofit. Everything it touches is a scene edit, so it can all
@@ -1483,8 +1594,8 @@ public static class ArkanoidSetup
     // The menu's plane stands nearer the camera than a round's, so its paddle
     // and ball were authored the same world size and came out bigger on screen.
     // Scaled by the ratio of the two depths they read as the same objects, and
-    // the ball's speed goes with them so it still crosses the menu's screen at
-    // the gentler rate it was given.
+    // the ball's speed goes with them so it crosses the menu's screen at the
+    // same rate a round's ball crosses its own.
     static void ScaleMenuPlayToPlayfieldSize()
     {
         var menu = Object.FindAnyObjectByType<MainMenuPanel>(FindObjectsInactive.Include);
