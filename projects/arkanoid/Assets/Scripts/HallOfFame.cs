@@ -79,7 +79,10 @@ public class HallOfFame : MonoBehaviour
     // The next champion, wrapping — the tenth's next is the first again —
     // scrolled in rather than swapped in. The champion being left behind stays
     // standing and travels out of the frame, so the change reads as movement
-    // along a row of champions rather than as one plaque becoming another.
+    // along a row of champions rather than as one plaque becoming another. The
+    // arrow that was hit travels in with the champion arriving: name, score and
+    // arrow are one plaque, and putting the arrow back where it stood while the
+    // rest flowed in from the left was the one part appearing out of thin air.
     public IEnumerator Advance()
     {
         // The arrow is hidden when there is nobody else to show, so this is
@@ -89,15 +92,26 @@ public class HallOfFame : MonoBehaviour
         var outgoing = new List<GameObject>(symbols);
         symbols.Clear();
         index = (index + 1) % champions.Count;
+        // The arrow that was just hit belongs to the champion arriving as much
+        // as the name and the score do, so it comes in with them from the left
+        // rather than being switched back on where it stood. Where it stands is
+        // read off it now, before it is sent out to the left: that is where the
+        // frame it was last fitted to wants it, which is not something to
+        // guess at.
+        float optionRest = OptionX;
+        MoveOption(optionRest - ScrollDistance);
         // Built where it will come from, off to the left of the plaque.
         Render(-ScrollDistance);
 
         for (float t = 0f; t < ScrollDuration; t += Time.deltaTime)
         {
-            MoveLines(Mathf.SmoothStep(0f, ScrollDistance, t / ScrollDuration));
+            float travelled = Mathf.SmoothStep(0f, ScrollDistance, t / ScrollDuration);
+            MoveLines(travelled);
+            MoveOption(optionRest - ScrollDistance + travelled);
             yield return null;
         }
         MoveLines(ScrollDistance);
+        MoveOption(optionRest);
 
         // The travel is over; what is left is putting the lines back where they
         // were authored with the champion that has arrived standing on them, so
@@ -115,6 +129,18 @@ public class HallOfFame : MonoBehaviour
         MoveLine(scoreLine, x);
     }
 
+    // Where the "next champion" arrow stands when nothing is scrolling: the
+    // place MainMenuPanel's fit to the frame left it, which is only known at
+    // runtime and may change with the window.
+    float OptionX => nextOption != null ? nextOption.transform.localPosition.x : 0f;
+
+    void MoveOption(float x)
+    {
+        if (nextOption == null) return;
+        var position = nextOption.transform.localPosition;
+        nextOption.transform.localPosition = new Vector3(x, position.y, position.z);
+    }
+
     static void MoveLine(MeshFilter line, float x)
     {
         if (line == null) return;
@@ -122,8 +148,9 @@ public class HallOfFame : MonoBehaviour
         line.transform.localPosition = new Vector3(x, position.y, position.z);
     }
 
-    // The menu puts every shattered arrow back after a choice, including the
-    // "next champion" one it may not be right to show.
+    // A shattered arrow is put back by the menu, or — for this one — scrolled
+    // back in by Advance; either way the "next champion" arrow is one it may
+    // not be right to show at all.
     public void RefreshOptions()
     {
         if (nextOption != null) nextOption.SetActive(champions.Count > 1);
