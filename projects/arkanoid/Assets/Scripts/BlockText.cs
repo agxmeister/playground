@@ -101,10 +101,6 @@ public static class BlockText
         + index * (GlyphWidth + 1) * cell
         + GlyphWidth * cell / 2f;
 
-    public static Mesh BuildLinesMesh(string name, string[] lines, float cell, float depth, float uvScale,
-        int gapRows) =>
-        BuildMesh(name, LinesCells(lines, gapRows), cell, depth, uvScale, Vector2.zero);
-
     // Several lines stacked into one grid, each centred on the widest. Used for
     // an option label too long to sit across its arrow in one line.
     public static bool[,] LinesCells(string[] lines, int gapRows)
@@ -272,7 +268,79 @@ public static class BlockText
         return outline.ToArray();
     }
 
-    public static Mesh BuildArrowMesh(string name, Vector2[] outline, float depth)
+    // A pocket sunk into a face for lettering to be set into: the cells to sink,
+    // how big one of them is, and where the block of them sits on the face. The
+    // pocket is one cell deep and its mouth flares one cell wider than its
+    // floor, so every wall is a 45° chamfer.
+    //
+    // A wall has to lean. The menu is looked at head-on, so a pocket walled
+    // straight down would show no wall at all on screen and the lettering would
+    // sit in a hole with no visible edge — nothing would say it was sunk. Leaned,
+    // each wall has real width, and the light (head-on, pitched down by
+    // LightPitch) does the rest: the wall above a stroke faces away from the
+    // light and goes dark, the wall below it faces into the light and comes up
+    // brighter than the face around it, and that pair of edges is the whole of
+    // what reads as "set into".
+    public class Engraving
+    {
+        // The pocket, at the resolution its chamfer is measured in.
+        public bool[,] Cells;
+        public float Cell;
+        // Where the block of cells is centred on the face it is cut into.
+        public Vector2 Centre;
+        // One cell in and one cell down — the 45° the walls lean at.
+        public float Depth => Cell;
+    }
+
+    // The pocket a block of lettering is set into: the lettering at
+    // `subdivisions` times its own resolution, grown by one sub-cell all round.
+    //
+    // Growing it is what gives the mouth a chamfer wider than the lettering it
+    // holds. Eroding that back by the same step — which is what the geometry
+    // does when it drops a corner to the floor only where every cell meeting it
+    // is pocket — returns exactly the lettering again, so the blocks seated in
+    // the pocket fit their own shape rather than an approximation of it. That
+    // holds as long as no gap in the lettering is thinner than two sub-cells,
+    // which at any sensible subdivision no block glyph is.
+    public static Engraving Pocket(bool[,] cells, float cell, Vector2 centre, int subdivisions)
+    {
+        int rows = cells.GetLength(0), columns = cells.GetLength(1);
+        var pocket = new bool[rows * subdivisions + 2, columns * subdivisions + 2];
+        for (int row = 0; row < rows; row++)
+            for (int column = 0; column < columns; column++)
+            {
+                if (!cells[row, column]) continue;
+                for (int r = 0; r <= subdivisions + 1; r++)
+                    for (int c = 0; c <= subdivisions + 1; c++)
+                        pocket[row * subdivisions + r, column * subdivisions + c] = true;
+            }
+        // The padding is one sub-cell on every side, so the pocket is centred
+        // exactly where the lettering is.
+        return new Engraving { Cells = pocket, Cell = cell / subdivisions, Centre = centre };
+    }
+
+    // The part of a convex polygon on the inner side of a half-plane — the
+    // points p with dot(p, normal) >= distance — as a convex polygon of its own.
+    // Cutting the arrow's face into the four regions around its label's block is
+    // what lets the face be drawn with a rectangular hole in it without a
+    // general triangulator: each region is still convex, so each still fans.
+    static List<Vector2> Clip(List<Vector2> polygon, Vector2 normal, float distance)
+    {
+        var clipped = new List<Vector2>();
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            var current = polygon[i];
+            var next = polygon[(i + 1) % polygon.Count];
+            float here = Vector2.Dot(current, normal) - distance;
+            float there = Vector2.Dot(next, normal) - distance;
+            if (here >= 0f) clipped.Add(current);
+            if (here >= 0f != there >= 0f)
+                clipped.Add(Vector2.Lerp(current, next, here / (here - there)));
+        }
+        return clipped;
+    }
+
+    public static Mesh BuildArrowMesh(string name, Vector2[] outline, float depth, Engraving engraving = null)
     {
         float halfDepth = depth / 2f;
 
@@ -298,21 +366,92 @@ public static class BlockText
             triangles.Add(start); triangles.Add(start + 1); triangles.Add(start + 2);
         }
 
+        void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 outward)
+        {
+            Triangle(a, b, c, outward);
+            Triangle(a, c, d, outward);
+        }
+
         Vector3 Front(Vector2 p) => new Vector3(p.x, p.y, -halfDepth);
         Vector3 Back(Vector2 p) => new Vector3(p.x, p.y, halfDepth);
 
-        // The outline is convex, so both flat faces fan out from its centre.
-        var centre = Vector2.zero;
-        foreach (var p in outline) centre += p;
-        centre /= outline.Length;
-
-        for (int i = 0; i < outline.Length; i++)
+        // Any convex polygon fans out from its own centre.
+        void Fan(List<Vector2> polygon, float z, Vector3 outward)
         {
-            var p = outline[i];
-            var q = outline[(i + 1) % outline.Length];
-            Triangle(Front(centre), Front(p), Front(q), Vector3.back);
-            Triangle(Back(centre), Back(p), Back(q), Vector3.forward);
+            if (polygon.Count < 3) return;
+            var middle = Vector2.zero;
+            foreach (var p in polygon) middle += p;
+            middle /= polygon.Count;
+            for (int i = 0; i < polygon.Count; i++)
+                Triangle(new Vector3(middle.x, middle.y, z),
+                    new Vector3(polygon[i].x, polygon[i].y, z),
+                    new Vector3(polygon[(i + 1) % polygon.Count].x, polygon[(i + 1) % polygon.Count].y, z),
+                    outward);
         }
+
+        var shape = new List<Vector2>(outline);
+
+        // The front face, with the label's pocket sunk into it. The pocket's
+        // cells cover a rectangular block of the face, so the face outside it is
+        // drawn as the four regions of the outline around that block — each one
+        // still convex, and so still a fan.
+        void PocketedFace(Engraving label)
+        {
+            var cells = label.Cells;
+            int rows = cells.GetLength(0), columns = cells.GetLength(1);
+            float cell = label.Cell, depth = label.Depth;
+            float left = label.Centre.x - columns * cell / 2f, right = left + columns * cell;
+            float bottom = label.Centre.y - rows * cell / 2f, top = bottom + rows * cell;
+
+            Fan(Clip(shape, Vector2.up, top), -halfDepth, Vector3.back);
+            Fan(Clip(shape, Vector2.down, -bottom), -halfDepth, Vector3.back);
+            var band = Clip(Clip(shape, Vector2.up, bottom), Vector2.down, -top);
+            Fan(Clip(band, Vector2.left, -left), -halfDepth, Vector3.back);
+            Fan(Clip(band, Vector2.right, right), -halfDepth, Vector3.back);
+
+            // Inside the block the face is a height field on the cell grid
+            // rather than floors and walls fitted together: a corner of the grid
+            // lies on the pocket's floor where all four cells meeting it are
+            // pocket, and up at the face otherwise. Neighbouring cells then
+            // share their corners' depths by construction, so the chamfer comes
+            // out mitred at every outside corner of a stroke and dimpled at
+            // every inside one with nothing said about corners anywhere. Fitting
+            // walls together by hand is what the first attempt at this did, and
+            // every awkward shape in the font was its own special case.
+            bool Sunk(int row, int column) =>
+                row >= 0 && row < rows && column >= 0 && column < columns && cells[row, column];
+            float Corner(int row, int column) =>
+                Sunk(row - 1, column - 1) && Sunk(row - 1, column)
+                    && Sunk(row, column - 1) && Sunk(row, column) ? depth : 0f;
+            Vector3 At(float x, float y, float z) => new Vector3(x, y, -halfDepth + z);
+
+            for (int row = 0; row < rows; row++)
+            {
+                float y1 = top - row * cell, y0 = y1 - cell;
+                for (int column = 0; column < columns; column++)
+                {
+                    float topLeft = Corner(row, column), topRight = Corner(row, column + 1);
+                    float bottomLeft = Corner(row + 1, column), bottomRight = Corner(row + 1, column + 1);
+                    float x0 = left + column * cell, x1 = x0 + cell;
+                    // Face the pocket never reaches runs on as one piece for as
+                    // long as it stays flat.
+                    if (topLeft == 0f && topRight == 0f && bottomLeft == 0f && bottomRight == 0f)
+                    {
+                        int end = column;
+                        while (end + 1 < columns
+                            && Corner(row, end + 2) == 0f && Corner(row + 1, end + 2) == 0f) end++;
+                        x1 = left + (end + 1) * cell;
+                        column = end;
+                    }
+                    Quad(At(x0, y0, bottomLeft), At(x1, y0, bottomRight),
+                        At(x1, y1, topRight), At(x0, y1, topLeft), Vector3.back);
+                }
+            }
+        }
+
+        Fan(shape, halfDepth, Vector3.forward);
+        if (engraving == null) Fan(shape, -halfDepth, Vector3.back);
+        else PocketedFace(engraving);
 
         for (int i = 0; i < outline.Length; i++)
         {

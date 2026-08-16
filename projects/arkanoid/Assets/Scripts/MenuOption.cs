@@ -39,10 +39,9 @@ public class MenuOption : MonoBehaviour
         Shatter();
     }
 
-    // The slab and the label standing proud of it each break into rubble of
-    // their own colour, then the whole option switches off. Like the title
-    // letters it is never destroyed — MainMenuPanel puts it back when the menu
-    // next opens.
+    // The banner and the lettering seated in it each break into rubble of their
+    // own colour, then the whole option switches off. Like the title letters it
+    // is never destroyed — MainMenuPanel puts it back when the menu next opens.
     void Shatter()
     {
         foreach (var renderer in GetComponentsInChildren<MeshRenderer>())

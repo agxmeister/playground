@@ -100,12 +100,26 @@ public static class ArkanoidSetup
     const string LegacyMenuOptionStartMeshPath = MeshesFolder + "/MenuOptionStart.asset";
     const string LegacyMenuOptionRecordsMeshPath = MeshesFolder + "/MenuOptionRecords.asset";
     const string LegacyMenuLabelRecordsMeshPath = MeshesFolder + "/MenuLabelRecords.asset";
-    const string MenuArrowRightMeshPath = MeshesFolder + "/MenuArrowRight.asset";
-    const string MenuArrowLeftMeshPath = MeshesFolder + "/MenuArrowLeft.asset";
-    const string MenuLabelStartMeshPath = MeshesFolder + "/MenuLabelStart.asset";
-    const string MenuLabelHallMeshPath = MeshesFolder + "/MenuLabelHall.asset";
-    const string MenuLabelNextMeshPath = MeshesFolder + "/MenuLabelNext.asset";
-    const string MenuLabelBackMeshPath = MeshesFolder + "/MenuLabelBack.asset";
+    // The two shared arrow meshes and the four separate label meshes that stood
+    // on them, from when a label was a block of letters parked in front of the
+    // banner's face rather than cut into it.
+    const string LegacyMenuArrowRightMeshPath = MeshesFolder + "/MenuArrowRight.asset";
+    const string LegacyMenuArrowLeftMeshPath = MeshesFolder + "/MenuArrowLeft.asset";
+    const string LegacyMenuLabelStartMeshPath = MeshesFolder + "/MenuLabelStart.asset";
+    const string LegacyMenuLabelHallMeshPath = MeshesFolder + "/MenuLabelHall.asset";
+    const string LegacyMenuLabelNextMeshPath = MeshesFolder + "/MenuLabelNext.asset";
+    const string LegacyMenuLabelBackMeshPath = MeshesFolder + "/MenuLabelBack.asset";
+    // An arrow carries the pocket its own lettering is set into, so there is one
+    // mesh per option rather than one per direction — and one block of white
+    // lettering per option to seat in it.
+    const string MenuArrowStartMeshPath = MeshesFolder + "/MenuArrowStart.asset";
+    const string MenuArrowHallMeshPath = MeshesFolder + "/MenuArrowHall.asset";
+    const string MenuArrowNextMeshPath = MeshesFolder + "/MenuArrowNext.asset";
+    const string MenuArrowBackMeshPath = MeshesFolder + "/MenuArrowBack.asset";
+    const string MenuInlayStartMeshPath = MeshesFolder + "/MenuInlayStart.asset";
+    const string MenuInlayHallMeshPath = MeshesFolder + "/MenuInlayHall.asset";
+    const string MenuInlayNextMeshPath = MeshesFolder + "/MenuInlayNext.asset";
+    const string MenuInlayBackMeshPath = MeshesFolder + "/MenuInlayBack.asset";
     const string MenuOptionStartMaterialPath = MaterialsFolder + "/MenuOptionStart.mat";
     const string MenuOptionRecordsMaterialPath = MaterialsFolder + "/MenuOptionRecords.mat";
     const string MenuLabelMaterialPath = MaterialsFolder + "/MenuLabel.mat";
@@ -134,8 +148,28 @@ public static class ArkanoidSetup
     // spare; the arrows are sized for the gaps around them first, and the
     // lettering follows.
     const float MenuArrowLabelCell = 0.038f;
-    const float MenuArrowLabelDepth = 0.12f;
     const int MenuArrowLabelGapRows = 2;
+    // The lettering is *set into* the banner rather than cut out of it: the
+    // arrow's face carries a pocket the shape of the word, and small white
+    // blocks — the same block-font geometry the title is built from — sit down
+    // in it. A groove on its own was tried first and read as a smudge: its floor
+    // faces the camera exactly as the face around it does, is lit exactly the
+    // same, and so at this size the letters had nothing but two hairlines of
+    // chamfer to be seen by. What the pocket is for now is the shadow line that
+    // says the white blocks are below the surface rather than on it.
+    //
+    // A third of a cell is how far the pocket's mouth flares past the blocks,
+    // and how deep they sit: enough to read as a chamfer, and short of the half
+    // cell at which the pockets of two strokes one cell apart would meet.
+    const int MenuArrowPocketSubdivisions = 3;
+    const float MenuArrowPocketDepth = MenuArrowLabelCell / MenuArrowPocketSubdivisions;
+    // Thick enough to be a block rather than a decal, and well short of the
+    // banner it is seated in.
+    const float MenuArrowInlayDepth = 0.08f;
+    // How far the blocks stand off the floor they cover, which is nothing to see
+    // and everything to the depth buffer: the two are the same shape, so without
+    // it they would fight for the same pixels.
+    const float MenuArrowInlayLift = 0.1f * MenuArrowPocketDepth;
     static readonly string[] MenuStartLabel = { "START" };
     // Two lines: HALL OF FAME across one would be either wider than the banner
     // or too small to read.
@@ -738,38 +772,95 @@ public static class ArkanoidSetup
         // letter, not one for the word, so the ball can knock the letters out
         // one at a time; each letter's UVs carry its place in the word, which
         // keeps the masonry running across the joins.
-        // The option arrows and their labels are built here too, and the
-        // labelled slabs they replaced are deleted. The size checks are what
-        // bring this stage back to life on an already-built project when a
+        // The option arrows are built here too — the pocket their lettering is
+        // set into, and the block of white lettering that sits in it — and the
+        // labelled slabs they replaced, along with the separate label meshes
+        // that used to stand proud of them, are deleted. The size checks are
+        // what bring this stage back to life on an already-built project when a
         // constant is retuned, rather than only when a mesh is missing.
-        if (!File.Exists(ToAbsolute(MenuLetterMeshPath(0)))
-            || !File.Exists(ToAbsolute(MenuArrowRightMeshPath))
-            || !File.Exists(ToAbsolute(MenuLabelStartMeshPath))
-            || MeshWidthDiffers(MenuArrowRightMeshPath, ArrowOutlineWidth())
-            || MeshWidthDiffers(MenuLetterMeshPath(0), BlockText.GlyphWidth * MenuTitleCell))
+        //
+        // The title's letters and the arrows are rebuilt independently, because
+        // writing a mesh over one already standing in the scene costs the scene
+        // its reference to it (see the repair stage just below). Retuning the
+        // arrows should not make the title pay for it.
+        bool lettersStale = !File.Exists(ToAbsolute(MenuLetterMeshPath(0)))
+            || MeshWidthDiffers(MenuLetterMeshPath(0), BlockText.GlyphWidth * MenuTitleCell);
+        bool arrowsStale = !File.Exists(ToAbsolute(MenuArrowStartMeshPath))
+            || !File.Exists(ToAbsolute(MenuInlayStartMeshPath))
+            || MeshWidthDiffers(MenuArrowStartMeshPath, ArrowOutlineWidth());
+        if (lettersStale || arrowsStale)
         {
-            Directory.CreateDirectory(ToAbsolute(MenuLettersMeshFolder));
-            for (int i = 0; i < MenuTitleWord.Length; i++)
-                AssetDatabase.CreateAsset(
-                    BlockText.BuildMesh($"Letter{i}", BlockText.GlyphCells(MenuTitleWord[i]), MenuTitleCell,
-                        MenuTitleDepth, MenuTitleUvScale,
-                        new Vector2(BlockText.GlyphCentreX(MenuTitleWord, i, MenuTitleCell), 0f)),
-                    MenuLetterMeshPath(i));
-            AssetDatabase.CreateAsset(
-                BlockText.BuildArrowMesh("MenuArrowRight", ArrowOutline(true), MenuArrowDepth),
-                MenuArrowRightMeshPath);
-            AssetDatabase.CreateAsset(
-                BlockText.BuildArrowMesh("MenuArrowLeft", ArrowOutline(false), MenuArrowDepth),
-                MenuArrowLeftMeshPath);
-            CreateArrowLabelMesh("MenuLabelStart", MenuStartLabel, MenuLabelStartMeshPath);
-            CreateArrowLabelMesh("MenuLabelHall", MenuHallLabel, MenuLabelHallMeshPath);
-            CreateArrowLabelMesh("MenuLabelNext", MenuNextLabel, MenuLabelNextMeshPath);
-            CreateArrowLabelMesh("MenuLabelBack", MenuBackLabel, MenuLabelBackMeshPath);
+            if (lettersStale)
+            {
+                Directory.CreateDirectory(ToAbsolute(MenuLettersMeshFolder));
+                for (int i = 0; i < MenuTitleWord.Length; i++)
+                    AssetDatabase.CreateAsset(
+                        BlockText.BuildMesh($"Letter{i}", BlockText.GlyphCells(MenuTitleWord[i]), MenuTitleCell,
+                            MenuTitleDepth, MenuTitleUvScale,
+                            new Vector2(BlockText.GlyphCentreX(MenuTitleWord, i, MenuTitleCell), 0f)),
+                        MenuLetterMeshPath(i));
+            }
+            if (arrowsStale)
+            {
+                CreateArrowMesh("MenuArrowStart", true, MenuStartLabel, MenuArrowStartMeshPath);
+                CreateArrowMesh("MenuArrowHall", false, MenuHallLabel, MenuArrowHallMeshPath);
+                CreateArrowMesh("MenuArrowNext", false, MenuNextLabel, MenuArrowNextMeshPath);
+                CreateArrowMesh("MenuArrowBack", true, MenuBackLabel, MenuArrowBackMeshPath);
+                CreateInlayMesh("MenuInlayStart", MenuStartLabel, MenuInlayStartMeshPath);
+                CreateInlayMesh("MenuInlayHall", MenuHallLabel, MenuInlayHallMeshPath);
+                CreateInlayMesh("MenuInlayNext", MenuNextLabel, MenuInlayNextMeshPath);
+                CreateInlayMesh("MenuInlayBack", MenuBackLabel, MenuInlayBackMeshPath);
+            }
             AssetDatabase.DeleteAsset(LegacyMenuTitleMeshPath);
             AssetDatabase.DeleteAsset(LegacyMenuOptionStartMeshPath);
             AssetDatabase.DeleteAsset(LegacyMenuOptionRecordsMeshPath);
             AssetDatabase.DeleteAsset(LegacyMenuLabelRecordsMeshPath);
+            AssetDatabase.DeleteAsset(LegacyMenuArrowRightMeshPath);
+            AssetDatabase.DeleteAsset(LegacyMenuArrowLeftMeshPath);
+            AssetDatabase.DeleteAsset(LegacyMenuLabelStartMeshPath);
+            AssetDatabase.DeleteAsset(LegacyMenuLabelHallMeshPath);
+            AssetDatabase.DeleteAsset(LegacyMenuLabelNextMeshPath);
+            AssetDatabase.DeleteAsset(LegacyMenuLabelBackMeshPath);
             Debug.Log("[ArkanoidSetup] Stage 40: created the menu block meshes.");
+            return;
+        }
+
+        // Stage 70: put back any mesh stage 40 has just knocked out from under
+        // the scene. Writing an asset over one already standing there destroys
+        // the object the scene was pointing at, and the reference goes null
+        // rather than following the new one into the same file — so a re-run of
+        // stage 40 blanks whatever it rewrote. It went unseen for a long time
+        // because stage 50 used to follow it and author the whole screen afresh;
+        // the first re-run that did not left ARKANOID missing from the middle of
+        // its own menu.
+        //
+        // **It is numbered with the stages it arrived alongside but stands here
+        // on purpose**, directly behind the stage whose damage it repairs and
+        // ahead of every stage that saves the scene: a save taken while a
+        // reference is null writes the damage to disk, which is exactly how the
+        // missing title came to be committed. It saves itself on the same tick
+        // rather than leaving that to a paired stage, because a disk-side gate
+        // for it is the one thing that cannot be written safely — a renderer
+        // holding no mesh is a permanent, legitimate feature of this scene (the
+        // hall's two champion lines are anchors and draw nothing), so a gate on
+        // one would queue a save on every reload for ever.
+        var drawnMenu = FindRootObject("MenuScreen");
+        if (drawnMenu != null && MissingMenuMesh(drawnMenu.transform))
+        {
+            var title = drawnMenu.transform.Find("MenuSlider/MenuBoard/MenuTitle");
+            for (int i = 0; title != null && i < MenuTitleWord.Length && i < title.childCount; i++)
+                title.GetChild(i).GetComponent<MeshFilter>().sharedMesh =
+                    AssetDatabase.LoadAssetAtPath<Mesh>(MenuLetterMeshPath(i));
+            foreach (var (path, mesh) in MenuMeshes)
+            {
+                var drawn = drawnMenu.transform.Find(path);
+                if (drawn != null)
+                    drawn.GetComponent<MeshFilter>().sharedMesh =
+                        AssetDatabase.LoadAssetAtPath<Mesh>(mesh);
+            }
+            EditorSceneManager.MarkSceneDirty(scene);
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 70: put the menu's meshes back and queued a scene save.");
             return;
         }
 
@@ -893,7 +984,6 @@ public static class ArkanoidSetup
             : null;
         if (builtMenuScreen != null
             && (builtStartOption == null
-                || builtStartOption.Find("ArrowLabel") == null
                 || !Mathf.Approximately(builtStartOption.localPosition.x, MenuArrowX)))
         {
             Object.DestroyImmediate(builtMenuScreen);
@@ -1157,6 +1247,141 @@ public static class ArkanoidSetup
             Debug.Log("[ArkanoidSetup] Stage 67: queued scene save for the next editor tick.");
             return;
         }
+
+        // Stage 68: cut each option's label into its arrow instead of standing
+        // it in front of the face. A label used to be a second object with a
+        // mesh and a pale material of its own, parked a little way towards the
+        // camera; it is part of the banner's own mesh now (see
+        // BlockText.Engraving), so the object goes and the arrow takes the mesh
+        // that carries its lettering. Four transforms and four mesh references
+        // rather than another wholesale rebuild.
+        var engravedMenu = FindRootObject("MenuScreen");
+        if (engravedMenu != null && FindOption(engravedMenu.transform, "ArrowLabel") != null)
+        {
+            EngraveOption(engravedMenu.transform, "MenuSlider/MenuBoard/OptionStart", MenuArrowStartMeshPath);
+            EngraveOption(engravedMenu.transform, "MenuSlider/MenuBoard/OptionRecords", MenuArrowHallMeshPath);
+            EngraveOption(engravedMenu.transform, "MenuSlider/MenuHall/OptionNext", MenuArrowNextMeshPath);
+            EngraveOption(engravedMenu.transform, "MenuSlider/MenuHall/OptionBack", MenuArrowBackMeshPath);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 68: engraved the option arrows (scene left dirty).");
+            return;
+        }
+
+        // Stage 69: persist stage 68, gated on the scene file still knowing
+        // about the label objects it took out.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("m_Name: ArrowLabel"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 69: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 72: seat a block of white lettering in each arrow's pocket. An
+        // empty pocket was what stage 68 left — the letters were the cut itself,
+        // and at this size a cut lit exactly as the face around it read as a
+        // smudge rather than a word. The blocks are the same geometry the title
+        // is built from, in the pale material the old raised labels wore, sunk
+        // to the floor of the pocket instead of parked in front of the face.
+        var inlaidMenu = FindRootObject("MenuScreen");
+        if (inlaidMenu != null && FindOption(inlaidMenu.transform, "ArrowInlay") == null)
+        {
+            var inlayMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuLabelMaterialPath);
+            InlayOption(inlaidMenu.transform, "MenuSlider/MenuBoard/OptionStart",
+                MenuInlayStartMeshPath, true, inlayMaterial);
+            InlayOption(inlaidMenu.transform, "MenuSlider/MenuBoard/OptionRecords",
+                MenuInlayHallMeshPath, false, inlayMaterial);
+            InlayOption(inlaidMenu.transform, "MenuSlider/MenuHall/OptionNext",
+                MenuInlayNextMeshPath, false, inlayMaterial);
+            InlayOption(inlaidMenu.transform, "MenuSlider/MenuHall/OptionBack",
+                MenuInlayBackMeshPath, true, inlayMaterial);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 72: seated the arrows' lettering (scene left dirty).");
+            return;
+        }
+
+        // Stage 73: persist stage 72, gated on the scene file not yet knowing
+        // about the blocks it seated.
+        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains("m_Name: ArrowInlay"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 73: queued scene save for the next editor tick.");
+            return;
+        }
+    }
+
+    // Every menu mesh stage 40 writes over, against the object that draws it.
+    // The title's eight letters are handled apart from this, since they are one
+    // mesh per letter against one child per letter.
+    static readonly (string Object, string Mesh)[] MenuMeshes =
+    {
+        ("MenuSlider/MenuBoard/OptionStart", MenuArrowStartMeshPath),
+        ("MenuSlider/MenuBoard/OptionRecords", MenuArrowHallMeshPath),
+        ("MenuSlider/MenuHall/OptionNext", MenuArrowNextMeshPath),
+        ("MenuSlider/MenuHall/OptionBack", MenuArrowBackMeshPath),
+        ("MenuSlider/MenuBoard/OptionStart/ArrowInlay", MenuInlayStartMeshPath),
+        ("MenuSlider/MenuBoard/OptionRecords/ArrowInlay", MenuInlayHallMeshPath),
+        ("MenuSlider/MenuHall/OptionNext/ArrowInlay", MenuInlayNextMeshPath),
+        ("MenuSlider/MenuHall/OptionBack/ArrowInlay", MenuInlayBackMeshPath),
+    };
+
+    // Whether anything the menu draws has lost the mesh it draws it with.
+    static bool MissingMenuMesh(Transform menu)
+    {
+        var title = menu.Find("MenuSlider/MenuBoard/MenuTitle");
+        if (title != null)
+            foreach (var letter in title.GetComponentsInChildren<MeshFilter>(true))
+                if (letter.sharedMesh == null) return true;
+        foreach (var (path, _) in MenuMeshes)
+        {
+            var drawn = menu.Find(path);
+            if (drawn != null && drawn.GetComponent<MeshFilter>().sharedMesh == null) return true;
+        }
+        return false;
+    }
+
+    // The first of the menu's options carrying a child of the given name.
+    static Transform FindOption(Transform menu, string child)
+    {
+        foreach (var option in menu.GetComponentsInChildren<MenuOption>(true))
+        {
+            var found = option.transform.Find(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    // One built arrow given the mesh carrying the pocket its lettering goes in,
+    // and rid of the label that used to stand in front of its face.
+    static void EngraveOption(Transform menu, string path, string arrowMeshPath)
+    {
+        var option = menu.Find(path);
+        if (option == null) return;
+        option.GetComponent<MeshFilter>().sharedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(arrowMeshPath);
+        var label = option.Find("ArrowLabel");
+        if (label != null) Object.DestroyImmediate(label.gameObject);
+    }
+
+    // One built arrow given the blocks that sit in its pocket.
+    static void InlayOption(Transform menu, string path, string inlayMeshPath,
+        bool pointingRight, Material material)
+    {
+        var option = menu.Find(path);
+        if (option == null) return;
+        CreateArrowInlay(option, inlayMeshPath, pointingRight, material);
+    }
+
+    // The white lettering seated in a banner's pocket: the same block geometry
+    // the title is built from, dropped to the floor the pocket's chamfer narrows
+    // down to, so what stands above it is the chamfer alone.
+    static void CreateArrowInlay(Transform option, string meshPath, bool pointingRight, Material material)
+    {
+        var inlay = new GameObject("ArrowInlay");
+        inlay.transform.SetParent(option, false);
+        var centre = ArrowLabelCentre(pointingRight);
+        inlay.transform.localPosition = new Vector3(centre.x, centre.y,
+            -MenuArrowDepth / 2f + MenuArrowPocketDepth - MenuArrowInlayLift + MenuArrowInlayDepth / 2f);
+        inlay.AddComponent<MeshFilter>().sharedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(meshPath);
+        inlay.AddComponent<MeshRenderer>().sharedMaterial = material;
     }
 
     // One sheet of drifting haze, as wide as the backdrop it hangs in front of
@@ -1317,10 +1542,26 @@ public static class ArkanoidSetup
         MenuArrowWidth, MenuArrowHeight, MenuArrowPoint,
         MenuArrowCornerRadius, MenuArrowCornerSegments, pointingRight);
 
-    static void CreateArrowLabelMesh(string name, string[] lines, string path) =>
+    // Where a banner's lettering sits: centred on the *body* rather than on the
+    // whole shape, so the point stays empty and the letters don't run out past
+    // the slants.
+    static Vector2 ArrowLabelCentre(bool pointingRight) =>
+        new Vector2(pointingRight ? -MenuArrowPoint / 2f : MenuArrowPoint / 2f, 0f);
+
+    // One option's banner, with the pocket its own name is set into.
+    static void CreateArrowMesh(string name, bool pointingRight, string[] lines, string path) =>
         AssetDatabase.CreateAsset(
-            BlockText.BuildLinesMesh(name, lines, MenuArrowLabelCell, MenuArrowLabelDepth, 1f,
-                MenuArrowLabelGapRows),
+            BlockText.BuildArrowMesh(name, ArrowOutline(pointingRight), MenuArrowDepth,
+                BlockText.Pocket(BlockText.LinesCells(lines, MenuArrowLabelGapRows),
+                    MenuArrowLabelCell, ArrowLabelCentre(pointingRight), MenuArrowPocketSubdivisions)),
+            path);
+
+    // The blocks that sit in that pocket, built at the same cell size from the
+    // same cells, so they fit the floor the pocket's chamfer narrows down to.
+    static void CreateInlayMesh(string name, string[] lines, string path) =>
+        AssetDatabase.CreateAsset(
+            BlockText.BuildMesh(name, BlockText.LinesCells(lines, MenuArrowLabelGapRows),
+                MenuArrowLabelCell, MenuArrowInlayDepth, 1f, Vector2.zero),
             path);
 
     // Runs once, on the first editor tick after the reload that registered it.
@@ -2232,9 +2473,11 @@ public static class ArkanoidSetup
         // START points right, out of the word and into the game; HALL OF FAME
         // points left, the way the screen travels to reach it.
         CreateArrowOption(board.transform, "OptionStart", MainMenuOption.StartGame,
-            MenuArrowX, MenuTitleY, true, MenuOptionStartMaterialPath, MenuLabelStartMeshPath, labelMaterial);
+            MenuArrowX, MenuTitleY, true, MenuOptionStartMaterialPath, MenuArrowStartMeshPath,
+            MenuInlayStartMeshPath, labelMaterial);
         CreateArrowOption(board.transform, "OptionRecords", MainMenuOption.HallOfFame,
-            -MenuArrowX, MenuTitleY, false, MenuOptionRecordsMaterialPath, MenuLabelHallMeshPath, labelMaterial);
+            -MenuArrowX, MenuTitleY, false, MenuOptionRecordsMaterialPath, MenuArrowHallMeshPath,
+            MenuInlayHallMeshPath, labelMaterial);
 
         BuildHallOfFame(slider.transform, titleMaterial, labelMaterial);
 
@@ -2296,18 +2539,18 @@ public static class ArkanoidSetup
         EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
     }
 
-    // One option: an arrow banner the ball can hit, with its label standing
-    // proud of the banner's front face so the light picks the letters out. The
+    // One option: an arrow banner the ball can hit, its label set into a pocket
+    // in the front face as white blocks rather than stood in front of it. The
     // collider is the arrow's own rounded outline rather than a box around it,
     // so a hit anywhere reflects off the shape the player can see.
     static GameObject CreateArrowOption(Transform parent, string name, MainMenuOption option,
-        float x, float y, bool pointingRight, string materialPath, string labelMeshPath, Material labelMaterial)
+        float x, float y, bool pointingRight, string materialPath, string arrowMeshPath,
+        string inlayMeshPath, Material inlayMaterial)
     {
         var go = new GameObject(name);
         go.transform.SetParent(parent, false);
         go.transform.localPosition = new Vector3(x, y, MenuPlaneZ);
-        go.AddComponent<MeshFilter>().sharedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(
-            pointingRight ? MenuArrowRightMeshPath : MenuArrowLeftMeshPath);
+        go.AddComponent<MeshFilter>().sharedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(arrowMeshPath);
         go.AddComponent<MeshRenderer>().sharedMaterial =
             AssetDatabase.LoadAssetAtPath<Material>(materialPath);
 
@@ -2317,15 +2560,7 @@ public static class ArkanoidSetup
         optionSo.FindProperty("option").enumValueIndex = (int)option;
         optionSo.ApplyModifiedPropertiesWithoutUndo();
 
-        // Centred on the body rather than on the whole arrow, so the point
-        // stays empty and the label doesn't run out past the slants.
-        var label = new GameObject("ArrowLabel");
-        label.transform.SetParent(go.transform, false);
-        label.transform.localPosition = new Vector3(
-            pointingRight ? -MenuArrowPoint / 2f : MenuArrowPoint / 2f, 0f,
-            -(MenuArrowDepth + MenuArrowLabelDepth) / 2f);
-        label.AddComponent<MeshFilter>().sharedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(labelMeshPath);
-        label.AddComponent<MeshRenderer>().sharedMaterial = labelMaterial;
+        CreateArrowInlay(go.transform, inlayMeshPath, pointingRight, inlayMaterial);
         return go;
     }
 
@@ -2347,9 +2582,11 @@ public static class ArkanoidSetup
         var nameLine = CreateChampionLine(hall.transform, "ChampionName", HallNameY, nameMaterial);
         var scoreLine = CreateChampionLine(hall.transform, "ChampionScore", HallScoreY, scoreMaterial);
         var next = CreateArrowOption(hall.transform, "OptionNext", MainMenuOption.NextChampion,
-            -MenuArrowX, HallArrowY, false, MenuOptionRecordsMaterialPath, MenuLabelNextMeshPath, scoreMaterial);
+            -MenuArrowX, HallArrowY, false, MenuOptionRecordsMaterialPath, MenuArrowNextMeshPath,
+            MenuInlayNextMeshPath, scoreMaterial);
         CreateArrowOption(hall.transform, "OptionBack", MainMenuOption.BackToMenu,
-            MenuArrowX, HallArrowY, true, MenuOptionStartMaterialPath, MenuLabelBackMeshPath, scoreMaterial);
+            MenuArrowX, HallArrowY, true, MenuOptionStartMaterialPath, MenuArrowBackMeshPath,
+            MenuInlayBackMeshPath, scoreMaterial);
 
         var hallSo = new SerializedObject(component);
         hallSo.FindProperty("nameLine").objectReferenceValue = nameLine;
