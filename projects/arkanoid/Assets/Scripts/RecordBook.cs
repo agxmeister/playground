@@ -40,5 +40,14 @@ public static class RecordBook
             score = score,
         });
         PlayerPrefs.SetString(Key, JsonUtility.ToJson(list));
+        PlayerPrefs.Save();
+    }
+
+    // Wipes the book. Nothing in the game reaches this — it is for testing the
+    // record path, which needs an empty book to be worth entering at all.
+    public static void Clear()
+    {
+        PlayerPrefs.DeleteKey(Key);
+        PlayerPrefs.Save();
     }
 }

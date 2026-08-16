@@ -10,7 +10,11 @@ public class GameManager : MonoBehaviour
     // components that read the keyboard themselves have to hold off too.
     public bool Paused => exitPrompt;
 
-    const string HighScoreKey = "Arkanoid.HighScore";
+    // Public so the editor's "clear records" command can wipe it alongside the
+    // record book: the stored high score is the bar a round has to clear to be
+    // asked for a name, so an emptied book with the old bar still standing
+    // would never reach name entry at all.
+    public const string HighScoreKey = "Arkanoid.HighScore";
 
     [SerializeField] Ball ballPrefab;
     [SerializeField] Brick brickPrefab;
@@ -148,8 +152,6 @@ public class GameManager : MonoBehaviour
         // way out, now that a round throws sparks off its borders too.
         Debris.ClearAll();
         Ricochet.ClearAll();
-        // A round abandoned mid-name-entry leaves this subscription behind.
-        if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
     }
 
     // Only StartGame ever reaches here: the menu's hall of fame is a screen of
@@ -368,6 +370,7 @@ public class GameManager : MonoBehaviour
                 if (ball.transform.position.y < BallLostY) OnBallLost();
                 break;
             case State.EnteringName:
+                ReadNameKeys(keyboard);
                 bool pressedEnter = keyboard != null
                     && (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame);
                 if (pressedEnter) SubmitName();
@@ -447,13 +450,11 @@ public class GameManager : MonoBehaviour
     void EndRound(State result)
     {
         endState = result;
-        var keyboard = Keyboard.current;
-        if (score > previousRecord && recordsPanel != null && keyboard != null)
+        if (score > previousRecord && recordsPanel != null && Keyboard.current != null)
         {
             state = State.EnteringName;
             typedName = "";
             recordsPanel.ShowNameEntry(score);
-            keyboard.onTextInput += OnTextInput;
             return;
         }
         ShowEndScreen();
@@ -469,23 +470,52 @@ public class GameManager : MonoBehaviour
         if (recordsPanel != null) recordsPanel.ShowRecords(RecordBook.Load(), message);
     }
 
-    void OnTextInput(char character)
+    // The name is read key by key rather than through Keyboard.onTextInput,
+    // which never delivered a character here and left the field looking broken.
+    // Reading keys is also the honest path for what the name is *for*: the hall
+    // of fame draws it in BlockText's 5 x 7 font, which has only the capitals
+    // and the digits, so a champion who typed "Alex" was put on the plaque as
+    // "A???". Only the glyphs that font can draw can be typed now.
+    void ReadNameKeys(Keyboard keyboard)
     {
-        if (state != State.EnteringName) return;
-        if (character == '\b')
+        if (keyboard == null) return;
+
+        bool changed = false;
+
+        void Append(char character)
         {
-            if (typedName.Length > 0) typedName = typedName.Substring(0, typedName.Length - 1);
-        }
-        else if (!char.IsControl(character) && typedName.Length < MaxNameLength)
-        {
+            // A leading space would be trimmed off the name anyway, and the
+            // plaque has nothing to draw for it.
+            if (typedName.Length >= MaxNameLength) return;
+            if (character == ' ' && typedName.Length == 0) return;
             typedName += character;
+            changed = true;
         }
-        recordsPanel.SetTypedName(typedName);
+
+        if (keyboard.backspaceKey.wasPressedThisFrame && typedName.Length > 0)
+        {
+            typedName = typedName.Substring(0, typedName.Length - 1);
+            changed = true;
+        }
+
+        for (var key = Key.A; key <= Key.Z; key++)
+            if (keyboard[key].wasPressedThisFrame) Append((char)('A' + (key - Key.A)));
+
+        // Digit1..Digit9 run in order and Digit0 sits after them, as it does on
+        // the row itself; the numpad's ten are plainly in order.
+        for (var key = Key.Digit1; key <= Key.Digit9; key++)
+            if (keyboard[key].wasPressedThisFrame) Append((char)('1' + (key - Key.Digit1)));
+        if (keyboard.digit0Key.wasPressedThisFrame) Append('0');
+        for (var key = Key.Numpad0; key <= Key.Numpad9; key++)
+            if (keyboard[key].wasPressedThisFrame) Append((char)('0' + (key - Key.Numpad0)));
+
+        if (keyboard.spaceKey.wasPressedThisFrame) Append(' ');
+
+        if (changed && recordsPanel != null) recordsPanel.SetTypedName(typedName);
     }
 
     void SubmitName()
     {
-        if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
         var name = typedName.Trim();
         RecordBook.Add(name.Length > 0 ? name : "???", score);
         ShowEndScreen();
@@ -496,7 +526,6 @@ public class GameManager : MonoBehaviour
         // The prompt freezes time, and timeScale outlives this component.
         Time.timeScale = 1f;
         if (dimTexture != null) Destroy(dimTexture);
-        if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
         if (mainMenuPanel != null) mainMenuPanel.OptionChosen -= OnMenuOptionChosen;
     }
 
