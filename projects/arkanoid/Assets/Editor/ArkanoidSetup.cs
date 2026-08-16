@@ -80,10 +80,10 @@ public static class ArkanoidSetup
     const float MenuTitleDepth = 0.4f;
     const float MenuTitleUvScale = 2f;
     const float MenuTitleY = 2.3f;
-    // Everything hittable sits on one plane just in front of the backdrop (a
-    // box at z -3 whose front face is at -3.2). 2D physics ignores Z entirely,
-    // so this is only about what the camera sees; the plane is what keeps the
-    // menu's bricks clear of the backdrop's surface.
+    // Everything hittable sits on one plane in front of the backdrop. 2D
+    // physics ignores Z entirely, so this is only about what the camera sees;
+    // the plane is what keeps the menu's bricks clear of the backdrop's
+    // surface, and what a screen arriving rises into.
     const float MenuPlaneZ = -3.7f;
     // Where the camera stands and the plane a round is played on. The menu's
     // plane is nearer the camera than the round's, so the same world size looks
@@ -143,15 +143,36 @@ public static class ArkanoidSetup
     // The paddle simply starts under the middle, between the two arrows.
     const float MenuPaddleRestX = 0f;
     // How wide the menu room's backdrop is: enough to fill that room's frame at
-    // z -3 on any sane aspect ratio (~23 units across at 21:9). It may overhang
-    // the playfield's room freely — the menu is switched off in the same frame
-    // the view arrives there, so the only time this backdrop is ever seen from
-    // outside its own room is on the journey between the two.
-    const float MenuBackdropWidth = 24f;
+    // its own depth on any sane aspect ratio (~25 units across at 21:9). It may
+    // overhang the playfield's room freely — the menu is switched off in the
+    // same frame the view arrives there, so the only time this backdrop is ever
+    // seen from outside its own room is on the journey between the two.
+    const float MenuBackdropWidth = 28f;
+    const float MenuBackdropDepth = 0.4f;
+    // How much clear air a screen keeps behind it while it is under the plane.
+    const float MenuBackdropClearance = 0.3f;
+    // The backdrop stands back far enough for a screen to fly in *under* the
+    // playing plane and still be seen in front of it: the sunken plane is
+    // ScreenChange.SinkDepth behind the playing one, the deepest thing standing
+    // on it — an option arrow — is half its own depth thicker again, and the
+    // backdrop's front face is half its depth in front of its centre. It used
+    // to sit at z -3, a fifth of a unit behind the letters, which left nothing
+    // for a screen to pass through. Standing it back lengthens every shadow the
+    // menu throws (the drop is the gap times the tangent of LightPitch), and
+    // that is the depth being paid for: the boards now visibly float in front
+    // of a wall rather than lying against it, which is what makes one of them
+    // rising off it read as movement in depth at all.
+    const float MenuBackdropZ = MenuPlaneZ + ScreenChange.SinkDepth
+        + MenuArrowDepth / 2f + MenuBackdropClearance + MenuBackdropDepth / 2f;
     // The hall of fame's two lines and the arrows that drive them, a screen's
-    // width to the left of the title board inside the slider.
-    const float HallNameY = 2.6f;
-    const float HallScoreY = 1.1f;
+    // width to the left of the title board inside the slider. The lines stand
+    // 2.25 apart rather than the 1.5 they were authored at, because the board
+    // moved out in front of its backdrop (see MenuBackdropZ) and the name's
+    // shadow now falls a unit below it — straight across the score, at the old
+    // spacing. HallOfFame sizes the lettering to whatever gap it finds, so
+    // widening this is the whole of the fix.
+    const float HallNameY = 3f;
+    const float HallScoreY = 0.75f;
     const float HallArrowY = 1.85f;
     const float MenuPaddleY = -3.6f;
     // Slower than the playfield's 8: the menu is steered, not fought. Scaled
@@ -927,7 +948,8 @@ public static class ArkanoidSetup
             menuRoom.transform.position = new Vector3(-MainMenuPanel.ScreenSpacing, 0f, 0f);
             var roomBackdrop = menuRoom.transform.Find("MenuBackdrop");
             if (roomBackdrop != null)
-                roomBackdrop.localScale = new Vector3(MenuBackdropWidth, 24f, 0.4f);
+                roomBackdrop.localScale =
+                    new Vector3(MenuBackdropWidth, 24f, MenuBackdropDepth);
             EditorSceneManager.MarkSceneDirty(scene);
             Debug.Log("[ArkanoidSetup] Stage 54: moved the menu into its own room (scene left dirty).");
             return;
@@ -968,6 +990,63 @@ public static class ArkanoidSetup
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 57: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 58: stand the menu's backdrop back off the playing plane, and
+        // widen it for the frame its new depth has. It was a fifth of a unit
+        // behind the letters, which is fine for a screen that only ever moves
+        // across the frame and no use at all to one that arrives from behind
+        // it: there was nowhere for a screen to be under the plane and still be
+        // seen. See MenuBackdropZ for what the depth is made of. One transform,
+        // so it edits in place rather than going through stage 50's rebuild.
+        var sunkBackdrop = FindRootObject("MenuScreen") != null
+            ? FindRootObject("MenuScreen").transform.Find("MenuBackdrop")
+            : null;
+        if (sunkBackdrop != null && sunkBackdrop.localPosition.z < MenuBackdropZ - 0.01f)
+        {
+            sunkBackdrop.localPosition = new Vector3(0f, 0f, MenuBackdropZ);
+            sunkBackdrop.localScale = new Vector3(MenuBackdropWidth, 24f, MenuBackdropDepth);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 58: stood the menu backdrop back (scene left dirty).");
+            return;
+        }
+
+        // Stage 59: persist stage 58, gated on the scene file still holding the
+        // backdrop at the width it had while it stood against the plane.
+        if (File.ReadAllText(ToAbsolute(scene.path)).Contains("m_LocalScale: {x: 24, y: 24, z: 0.4}"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 59: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 60: stand the hall of fame's two lines further apart, for the
+        // shadow the name throws now that the board stands out in front of its
+        // backdrop (see HallNameY). Two transforms, and the lettering resizes
+        // itself to the gap it finds.
+        var hallBoard = FindRootObject("MenuScreen") != null
+            ? FindRootObject("MenuScreen").transform.Find("MenuSlider/MenuHall")
+            : null;
+        var championName = hallBoard != null ? hallBoard.Find("ChampionName") : null;
+        var championScore = hallBoard != null ? hallBoard.Find("ChampionScore") : null;
+        if (championName != null && championScore != null
+            && championName.localPosition.y < HallNameY - 0.01f)
+        {
+            championName.localPosition = new Vector3(0f, HallNameY, MenuPlaneZ);
+            championScore.localPosition = new Vector3(0f, HallScoreY, MenuPlaneZ);
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 60: spaced the plaque's lines out (scene left dirty).");
+            return;
+        }
+
+        // Stage 61: persist stage 60, gated on the scene file still holding the
+        // score line where it used to stand.
+        if (File.ReadAllText(ToAbsolute(scene.path))
+            .Contains($"m_LocalPosition: {{x: 0, y: 1.1, z: {MenuPlaneZ}}}"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 61: queued scene save for the next editor tick.");
             return;
         }
     }
@@ -1871,13 +1950,13 @@ public static class ArkanoidSetup
         root.transform.position = new Vector3(-MainMenuPanel.ScreenSpacing, 0f, 0f);
         var menu = root.AddComponent<MainMenuPanel>();
 
-        // Covers this room's frame at any sane aspect ratio (at z -3 that frame
-        // is ~10 units tall) and stops where the playfield's own backdrop
-        // begins, so it hides nothing of the room the view travels to.
+        // Covers this room's frame at any sane aspect ratio (at its depth that
+        // frame is ~11 units tall), and stands far enough back for a screen to
+        // arrive under the playing plane in front of it.
         var backdrop = new GameObject("MenuBackdrop");
         backdrop.transform.SetParent(root.transform, false);
-        backdrop.transform.localPosition = new Vector3(0f, 0f, -3f);
-        backdrop.transform.localScale = new Vector3(MenuBackdropWidth, 24f, 0.4f);
+        backdrop.transform.localPosition = new Vector3(0f, 0f, MenuBackdropZ);
+        backdrop.transform.localScale = new Vector3(MenuBackdropWidth, 24f, MenuBackdropDepth);
         backdrop.AddComponent<MeshFilter>().sharedMesh = Resources.GetBuiltinResource<Mesh>("Cube.fbx");
         var backdropRenderer = backdrop.AddComponent<MeshRenderer>();
         backdropRenderer.sharedMaterial = backdropMaterial;

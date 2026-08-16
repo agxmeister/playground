@@ -61,9 +61,32 @@ public class Ball : MonoBehaviour
     // fixed height would leave the smaller pair visibly floating apart.
     const float RestClearance = 0.1f;
 
+    // How quickly the ball comes back to its plane once whatever lifted it out
+    // of it is out from under it. Nothing pushes it back down — it drops at its
+    // own rate, and it can only start dropping once nothing is holding it up.
+    const float PlaneReturn = 2.5f;
+
     Rigidbody2D body;
+    Renderer sphere;
     Transform followTarget;
     Vector3 followOffset;
+
+    // The plane the ball plays in, and how far in front of it — towards the
+    // camera — something solid has lifted it. 2D physics ignores Z, so this is
+    // the one direction the ball can be moved in without touching the rally:
+    // the menu raises a screen into the playing plane under a ball in flight,
+    // and rather than breaking under it or shoving it sideways, the screen
+    // carries it up on its face for a moment. The ball knows nothing of that —
+    // only that something solid is at a certain depth and it belongs in front
+    // of it.
+    float planeZ;
+    float planeOffset;
+    // What has been asked for this frame, taken as the largest of them: nothing
+    // resists being lifted, so the nearest face wins.
+    float pushed;
+    // Whether the offset was applied last frame, so a ball that has never been
+    // lifted — every ball in a round — is never written to at all.
+    bool lifted;
 
     // Which way a ball that has gone exactly flat should be sent. Taken from
     // the last surface it touched — pointing away from it — rather than being
@@ -83,9 +106,30 @@ public class Ball : MonoBehaviour
 
     public bool IsAttached => followTarget != null;
 
+    // How big the ball is drawn, which is the same all round: what tells
+    // whatever is rising under it whether it is standing over it, and how far
+    // in front of a face it has to sit to be resting on it rather than in it.
+    public float Radius => sphere != null ? sphere.bounds.extents.x : 0f;
+
+    // Whether the ball is in the plane it plays in, rather than out in front of
+    // it on top of something that lifted it.
+    public bool OnPlane => planeOffset <= 0f;
+
     void Awake()
     {
         body = GetComponent<Rigidbody2D>();
+        sphere = GetComponent<Renderer>();
+        planeZ = transform.position.z;
+    }
+
+    // Something solid stands with its near face at this depth, under the ball.
+    // The ball rides in front of it: its own radius clear, so it rests on the
+    // face rather than in it. Asked for every frame it holds, since a lift
+    // lasts exactly as long as something is under the ball.
+    public void PushInFrontOf(float faceZ)
+    {
+        float offset = planeZ - (faceZ - Radius);
+        if (offset > pushed) pushed = offset;
     }
 
     public void AttachTo(Transform paddle)
@@ -93,9 +137,14 @@ public class Ball : MonoBehaviour
         followTarget = paddle;
         body.bodyType = RigidbodyType2D.Kinematic;
         body.linearVelocity = Vector2.zero;
-        // A fresh serve owes nothing to the rally that ended.
+        // A fresh serve owes nothing to the rally that ended — including any
+        // depth it was left at when a menu screen changed under it. The plane
+        // is the paddle's: a ball is only ever served off one.
         flatBounces = 0;
         escapeY = 1f;
+        planeZ = paddle.position.z;
+        planeOffset = 0f;
+        pushed = 0f;
         followOffset = RestOffset(paddle);
         transform.position = paddle.position + followOffset;
     }
@@ -142,6 +191,22 @@ public class Ball : MonoBehaviour
     void Update()
     {
         if (IsAttached) transform.position = followTarget.position + followOffset;
+    }
+
+    // After everything that moves the ball across the field — the rally is 2D
+    // and owns X and Y; this owns Z, and the two never meet. Written only for a
+    // ball something has actually lifted, so a round's ball, which nothing ever
+    // does, keeps the depth it was spawned at untouched.
+    void LateUpdate()
+    {
+        planeOffset = pushed > planeOffset
+            ? pushed
+            : Mathf.Max(pushed, planeOffset - PlaneReturn * Time.deltaTime);
+        pushed = 0f;
+        if (planeOffset <= 0f && !lifted) return;
+        lifted = planeOffset > 0f;
+        var position = transform.position;
+        transform.position = new Vector3(position.x, position.y, planeZ - planeOffset);
     }
 
     void FixedUpdate()

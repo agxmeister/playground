@@ -16,8 +16,10 @@ public enum MainMenuOption { StartGame, HallOfFame, NextChampion, BackToMenu }
 // launch straight up picks nothing.
 //
 // The menu is two screens side by side inside MenuSlider — the title board and
-// the hall of fame a screen's width to its left — and choosing the hall of
-// fame slides the board off to the right rather than cutting to another view.
+// the hall of fame a screen's width to its left — and choosing one is travelled
+// to rather than cut to: the board being left flies out across the frame and
+// the one arriving comes in under the playing plane and rises into it (see
+// ScreenChange). The slider holds the layout; a change moves the boards.
 // The paddle and ball are outside the slider, so they stay put while the world
 // behind them moves.
 //
@@ -64,10 +66,6 @@ public class MainMenuPanel : MonoBehaviour
     // fall without leaving the player waiting on an empty menu.
     const float ShatterPause = 0.9f;
 
-    // The slide between the two screens. Long enough to read as travel, short
-    // enough not to be waited on.
-    const float SlideDuration = 0.6f;
-
     // The gap an option arrow keeps from the frame edge once it has been pulled
     // in to fit — the same gap the 16:9 layout leaves it, so a narrower screen
     // looks like the same design rather than a squeezed one.
@@ -87,11 +85,20 @@ public class MainMenuPanel : MonoBehaviour
     bool busy;
     bool showingHall;
     Vector3 paddleRest;
+    // Where the two screens were authored inside the slider. A change moves
+    // them itself now — out across the frame, and in again from under the plane
+    // — so this is what says where "in place" is.
+    Vector3 boardHome;
+    Vector3 hallHome;
+
+    Transform Board => title != null ? title.parent : null;
 
     void Awake()
     {
         // Where the paddle was authored: under the middle of the screen.
         if (paddle != null) paddleRest = paddle.transform.localPosition;
+        if (Board != null) boardHome = Board.localPosition;
+        if (hall != null) hallHome = hall.transform.localPosition;
         if (slider != null)
             foreach (var option in slider.GetComponentsInChildren<MenuOption>(true))
                 authoredOptionX[option.transform] = option.transform.localPosition.x;
@@ -154,7 +161,7 @@ public class MainMenuPanel : MonoBehaviour
         gameObject.SetActive(true);
         busy = false;
         showingHall = false;
-        if (slider != null) slider.localPosition = Vector3.zero;
+        ResetScreens();
         if (hall != null) hall.Reload();
         RestoreTitle();
         if (playGroup != null) playGroup.SetActive(true);
@@ -216,20 +223,21 @@ public class MainMenuPanel : MonoBehaviour
         {
             case MainMenuOption.HallOfFame:
                 RestoreBoard(hall != null ? hall.transform : null);
-                yield return SlideTo(true);
+                yield return ChangeTo(true);
                 break;
             case MainMenuOption.BackToMenu:
                 // The word's parent is the board: the two arrows stand beside
                 // it there, and they are mended with it.
                 RestoreBoard(title != null ? title.parent : null);
-                yield return SlideTo(false);
+                yield return ChangeTo(false);
                 break;
             case MainMenuOption.NextChampion:
                 // The champion doesn't change on the spot either: the plaque
-                // scrolls left, the same travel the arrow that was hit points
-                // along, and the champion being left behind slides out of the
-                // frame rather than blinking out of it.
-                if (hall != null) yield return hall.Advance();
+                // makes the same change these boards do, the champion being
+                // left behind travelling out of the frame the way the arrow
+                // that was hit points and the next one arriving under the
+                // plane, rather than one of them blinking into the other.
+                if (hall != null) yield return hall.Advance(ball);
                 break;
         }
 
@@ -248,21 +256,50 @@ public class MainMenuPanel : MonoBehaviour
         busy = false;
     }
 
-    IEnumerator SlideTo(bool toHall)
+    // One screen out and the next one in — no longer as one movement of the
+    // slider carrying both, because the two halves no longer travel in the same
+    // plane: the screen being left flies out across the frame in the playing
+    // plane, and the one arriving comes in under it and rises (see
+    // ScreenChange). The slider is only the layout now.
+    IEnumerator ChangeTo(bool toHall)
     {
         showingHall = toHall;
         if (slider == null) yield break;
-        float from = slider.localPosition.x;
-        // The hall is to the left, so reaching it carries the slider right —
+
+        // The hall is to the left, so reaching it carries everything right —
         // which is the view travelling left, the way its arrow points.
-        float to = toHall ? ScreenSpacing : 0f;
-        for (float t = 0f; t < SlideDuration; t += Time.deltaTime)
-        {
-            slider.localPosition = new Vector3(
-                Mathf.SmoothStep(from, to, t / SlideDuration), 0f, 0f);
-            yield return null;
-        }
-        slider.localPosition = new Vector3(to, 0f, 0f);
+        float distance = toHall ? ScreenSpacing : -ScreenSpacing;
+        var hallBoard = hall != null ? hall.transform : null;
+        var leaving = new ScreenPiece(toHall ? Board : hallBoard);
+        var arriving = new ScreenPiece(toHall ? hallBoard : Board);
+
+        yield return ScreenChange.FlyOut(leaving, distance);
+
+        // The screen that has gone is a screen's width off to one side. Handing
+        // that offset over to the slider, which is where the layout keeps it,
+        // moves nothing on screen — the slider gains exactly what the screen
+        // gives up — and leaves the arriving screen the whole of its own travel
+        // to make, from off the other side of the frame.
+        slider.localPosition = new Vector3(toHall ? ScreenSpacing : 0f, 0f, 0f);
+        leaving.MoveTo(0f, 0f);
+
+        yield return ScreenChange.FlyIn(arriving, -distance, ball);
+    }
+
+    // Everything a screen change moves, put back where it was authored, and
+    // everything it switched off made solid again. A change is a coroutine, and
+    // leaving the menu (START, and the round it leads to) stops one wherever it
+    // had got to — with a screen off the frame, or under the plane and not
+    // there to be hit. The menu is only ever reopened from the top, so this is
+    // where that is undone.
+    void ResetScreens()
+    {
+        if (slider == null) return;
+        slider.localPosition = Vector3.zero;
+        if (Board != null) Board.localPosition = boardHome;
+        if (hall != null) hall.transform.localPosition = hallHome;
+        foreach (var collider in slider.GetComponentsInChildren<Collider2D>(true))
+            collider.enabled = true;
     }
 
     void OnEnable()
