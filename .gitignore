@@ -60,6 +60,9 @@ mono_crash.*.json
 # Crashlytics generated file
 crashlytics-build.properties
 
+# macOS Finder metadata
+.DS_Store
+
 # Packed Addressables
 /[Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*
 
