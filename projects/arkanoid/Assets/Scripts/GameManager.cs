@@ -16,6 +16,12 @@ public class GameManager : MonoBehaviour
     // would never reach name entry at all.
     public const string HighScoreKey = "Arkanoid.HighScore";
 
+    // What a caught chunk of rubble is worth. Small next to the 100–500 a brick
+    // pays, because a brick drops six to nine of them: a whole shattered brick
+    // caught is worth about as much again as breaking it was, and none of it is
+    // free — the paddle has to leave the ball to be under the rubble.
+    public const int DebrisPoints = 10;
+
     [SerializeField] Ball ballPrefab;
     [SerializeField] Brick brickPrefab;
     [SerializeField] Brick halfBrickPrefab;
@@ -111,6 +117,23 @@ public class GameManager : MonoBehaviour
     {
         if (mainMenuPanel != null) mainMenuPanel.OptionChosen += OnMenuOptionChosen;
         ShowMenu();
+    }
+
+    // The paddle a shattering brick's rubble may be caught on, and null unless a
+    // round is actually being played: the menu's slabs shatter through the same
+    // code and there is no score on the menu screen to add to. Read once, when
+    // the rubble is spawned — OnDebrisCaught asks the question again when a
+    // chunk actually lands, since a round can end while rubble is still falling.
+    public Paddle Catcher => state == State.Ready || state == State.Playing ? paddle : null;
+
+    // A chunk of a broken brick landed on the paddle. Nothing is added once the
+    // round is over: rubble goes on falling over the end screen and over name
+    // entry, and a score being submitted to the hall of fame must not creep up
+    // underneath it.
+    public void OnDebrisCaught()
+    {
+        if (state != State.Ready && state != State.Playing) return;
+        SetScore(score + DebrisPoints);
     }
 
     void ShowMenu()

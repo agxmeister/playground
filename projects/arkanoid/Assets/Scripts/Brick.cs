@@ -39,7 +39,10 @@ public class Brick : MonoBehaviour
         if (damage >= Hardness)
         {
             var renderer = GetComponent<MeshRenderer>();
-            Debris.Spawn(transform.position, renderer.bounds.size, color, renderer.sharedMaterial);
+            // The rubble is handed the round's paddle, so the chunks a brick
+            // throws are worth catching rather than only worth watching.
+            Debris.Spawn(transform.position, renderer.bounds.size, color, renderer.sharedMaterial,
+                1f, GameManager.Instance != null ? GameManager.Instance.Catcher : null);
             if (GameManager.Instance != null) GameManager.Instance.OnBrickDestroyed(this);
             Destroy(gameObject);
             return;
