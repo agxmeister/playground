@@ -26,6 +26,7 @@ public static class ArkanoidSetup
     const string TexturesFolder = "Assets/Textures";
     const string BrickWallTexturePath = TexturesFolder + "/BrickWall.png";
     const string FogTexturePath = TexturesFolder + "/Fog.png";
+    const string BallPanelTexturePath = TexturesFolder + "/BallPanels.png";
     const string MenuFogMaterialPath = MaterialsFolder + "/MenuFog.mat";
     const string WallSideMaterialPath = MaterialsFolder + "/WallSide.mat";
     const string WallTopMaterialPath = MaterialsFolder + "/WallTop.mat";
@@ -1461,6 +1462,65 @@ public static class ArkanoidSetup
                 return;
             }
         }
+
+        // Stage 79: the ball's panels. A twisted ball turns (Ball.RollSpeed),
+        // and a plain sphere turning is a sphere standing still — there has to
+        // be something drawn on it for the roll to be visible at all.
+        if (!File.Exists(ToAbsolute(BallPanelTexturePath)))
+        {
+            WriteBallPanelTexture();
+            AssetDatabase.Refresh();
+            Debug.Log("[ArkanoidSetup] Stage 79: wrote the ball's panel texture.");
+            return;
+        }
+
+        // Stage 80: import it without mipmaps. The ball is a dozen-odd pixels
+        // across on screen against a 64 px texture, so a mip chain would hand
+        // the sphere an averaged-out level and the panels would be a flat grey
+        // — the exact failure of drawing something on a ball to be seen.
+        var panelImporter = AssetImporter.GetAtPath(BallPanelTexturePath) as TextureImporter;
+        if (panelImporter != null && panelImporter.mipmapEnabled)
+        {
+            panelImporter.mipmapEnabled = false;
+            panelImporter.filterMode = FilterMode.Bilinear;
+            panelImporter.SaveAndReimport();
+            Debug.Log("[ArkanoidSetup] Stage 80: turned the ball texture's mipmaps off.");
+            return;
+        }
+
+        // Stage 81: put the panels on the ball's material. The tint stays what
+        // it was and the texture is grayscale, the same bargain the brick wall
+        // struck, so the ball is still the colour it was authored — panelled.
+        var panelledBall = AssetDatabase.LoadAssetAtPath<Material>(BallMaterialPath);
+        var panelTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(BallPanelTexturePath);
+        if (panelledBall != null && panelTexture != null
+            && panelledBall.GetTexture("_BaseMap") == null)
+        {
+            panelledBall.SetTexture("_BaseMap", panelTexture);
+            EditorUtility.SetDirty(panelledBall);
+            AssetDatabase.SaveAssets();
+            Debug.Log("[ArkanoidSetup] Stage 81: panelled the ball's material.");
+            return;
+        }
+
+        // Stage 82: let the ball turn. It was authored with its rotation frozen,
+        // which is right for a ball that has nothing drawn on it and wrong for
+        // one that does. Nothing about the rally moves: the collider is a
+        // circle, so its rotation is not a fact any contact can read, and
+        // `Ball.FixedUpdate` writes the angular velocity itself every step
+        // rather than leaving it to the engine. The menu's ball is an instance
+        // of this prefab and overrides nothing here, so it comes along.
+        var turningBallRoot = PrefabUtility.LoadPrefabContents(BallPrefabPath);
+        var turningBallBody = turningBallRoot != null ? turningBallRoot.GetComponent<Rigidbody2D>() : null;
+        if (turningBallBody != null && turningBallBody.constraints != RigidbodyConstraints2D.None)
+        {
+            turningBallBody.constraints = RigidbodyConstraints2D.None;
+            PrefabUtility.SaveAsPrefabAsset(turningBallRoot, BallPrefabPath);
+            PrefabUtility.UnloadPrefabContents(turningBallRoot);
+            Debug.Log("[ArkanoidSetup] Stage 82: unfroze the ball's rotation.");
+            return;
+        }
+        if (turningBallRoot != null) PrefabUtility.UnloadPrefabContents(turningBallRoot);
     }
 
     // Every menu mesh stage 40 writes over, against the object that draws it.
@@ -2083,6 +2143,40 @@ public static class ArkanoidSetup
         texture.Apply();
         Directory.CreateDirectory(ToAbsolute(TexturesFolder));
         File.WriteAllBytes(ToAbsolute(BrickWallTexturePath), texture.EncodeToPNG());
+        Object.DestroyImmediate(texture);
+    }
+
+    // Four panels around the ball, so that a ball turning about the axis it
+    // faces the camera down reads as turning rather than as sitting still.
+    // Longitude is the texture's u on a stock sphere, so bands of u are wedges
+    // meeting at the poles — a beach ball, seen from the side. Only half the
+    // sphere is ever in view, which is 180° of that wrap: whatever the count,
+    // the ball on screen is a light side and a dark side with a seam between
+    // them, and the count decides how often that seam comes round. Four puts
+    // one every quarter turn, which is what makes a short scuff read as a roll
+    // at the dozen-odd pixels the ball is actually drawn at; more is finer than
+    // those pixels can carry.
+    //
+    // Grayscale, so the material's tint keeps supplying the colour, exactly as
+    // the brick wall does. How dark the dark panel goes is the whole of whether
+    // this works: half brightness read as shading on a sphere rather than as a
+    // mark on one, and the 0.22 tried after it took the dark side down to the
+    // backdrop's own value, which loses half the ball against the murk it is
+    // being tracked across. 0.38 is a mark that is unmistakably a mark and
+    // still plainly lighter than anything behind it.
+    static void WriteBallPanelTexture()
+    {
+        const int size = 64, panels = 4;
+        var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        for (int x = 0; x < size; x++)
+        {
+            float value = x * panels / size % 2 == 0 ? 1f : 0.38f;
+            for (int y = 0; y < size; y++)
+                texture.SetPixel(x, y, new Color(value, value, value, 1f));
+        }
+        texture.Apply();
+        Directory.CreateDirectory(ToAbsolute(TexturesFolder));
+        File.WriteAllBytes(ToAbsolute(BallPanelTexturePath), texture.EncodeToPNG());
         Object.DestroyImmediate(texture);
     }
 

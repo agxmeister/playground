@@ -14,6 +14,15 @@ public class Paddle : MonoBehaviour
     // about x 0 would be dragged out of its own room on the first frame.
     float homeX;
 
+    // Which way the paddle was travelling over the last frame, as −1, 0 or 1,
+    // which is what the ball reads off it to twist a hit (see
+    // Ball.OnCollisionEnter2D). It is not simply the key that is held: the two
+    // part company exactly where it matters, because a paddle jammed against
+    // the edge of the frame with the key still down has stopped, and a stopped
+    // paddle has no twist to give. The paddle has one speed and nothing else
+    // moves it, so there is nothing in between to report.
+    public float Drift { get; private set; }
+
     void Awake()
     {
         homeX = transform.position.x;
@@ -34,7 +43,11 @@ public class Paddle : MonoBehaviour
     void Update()
     {
         var keyboard = Keyboard.current;
-        if (keyboard == null) return;
+        if (keyboard == null)
+        {
+            Drift = 0f;
+            return;
+        }
 
         float direction = 0f;
         if (keyboard.leftArrowKey.isPressed || keyboard.aKey.isPressed) direction -= 1f;
@@ -43,8 +56,12 @@ public class Paddle : MonoBehaviour
         // Only X moves. The Z is kept rather than zeroed because the menu's
         // paddle lives on the menu screen's plane, well in front of the
         // playfield's.
-        float x = Mathf.Clamp(transform.position.x + direction * speed * Time.deltaTime,
-            homeX - xLimit, homeX + xLimit);
+        float wanted = transform.position.x + direction * speed * Time.deltaTime;
+        float x = Mathf.Clamp(wanted, homeX - xLimit, homeX + xLimit);
+        // Taken from whether the clamp let the move through, rather than from
+        // the key alone: a paddle already against the edge of the field is not
+        // travelling however hard it is pushed.
+        Drift = Mathf.Approximately(x, wanted) ? direction : 0f;
         transform.position = new Vector3(x, transform.position.y, transform.position.z);
     }
 }
