@@ -7,8 +7,8 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (currently fifty-seven of them, ending with the playfield opened out to the
-// frame the way the menu screens always were)
+// (numbered to eighty-five, ending with the game over board a lost round comes
+// to rest on)
 // creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
@@ -83,6 +83,24 @@ public static class ArkanoidSetup
     const float MenuTitleDepth = 0.4f;
     const float MenuTitleUvScale = 2f;
     const float MenuTitleY = 2.3f;
+    // What the board a lost round ends on has written across it, in the same
+    // block letters and the same masonry as the title. GAME OVER is a glyph
+    // longer than ARKANOID — 53 cells against 47, the space between the two
+    // words counting for one of them — and the arrows stand where they stand on
+    // every board, so the word is drawn at whatever cell makes it span exactly
+    // the width the title spans rather than at the title's own cell. That keeps
+    // the 0.6 of a unit the 16:9 layout leaves between a word and the arrow
+    // beside it, and it keeps the title the largest lettering on the menu.
+    const string MenuOverWord = "GAME OVER";
+    static readonly float MenuOverCell = MenuTitleCell
+        * BlockText.WordColumns(MenuTitleWord) / (float)BlockText.WordColumns(MenuOverWord);
+    // Where the slider's boards stand, and the order in X is the order the
+    // arrows walk: the hall of fame is two screens left of the title board now,
+    // with the board a lost round ends on between them, because every arrow
+    // scrolls the way it points and that board's left arrow leads to the hall
+    // while its right one leads back to the menu.
+    const float MenuOverBoardX = -MainMenuPanel.ScreenSpacing;
+    const float MenuHallBoardX = -2f * MainMenuPanel.ScreenSpacing;
     // Everything hittable sits on one plane in front of the backdrop. 2D
     // physics ignores Z entirely, so this is only about what the camera sees;
     // the plane is what keeps the menu's bricks clear of the backdrop's
@@ -239,6 +257,14 @@ public static class ArkanoidSetup
     const float HallNameY = 2.75f;
     const float HallScoreY = 1f;
     const float HallArrowY = 1.85f;
+    // The game over board is the plaque's shape — a word over a number, with the
+    // arrows standing between the two lines — so it uses the hall's own heights
+    // rather than authoring its own: the two screens read as one design, and
+    // whatever keeps the plaque's shadow out of its score keeps this board's out
+    // of its score too.
+    const float MenuOverWordY = HallNameY;
+    const float MenuOverScoreY = HallScoreY;
+    const float MenuOverArrowY = HallArrowY;
     const float MenuPaddleY = -3.6f;
     // What Ball.cs authors as its default, which is what the ball prefab — and
     // so every round — plays at. The menu's ball takes the same rate: it was
@@ -848,13 +874,15 @@ public static class ArkanoidSetup
         // arrows should not make the title pay for it.
         bool lettersStale = !File.Exists(ToAbsolute(MenuLetterMeshPath(0)))
             || MeshWidthDiffers(MenuLetterMeshPath(0), BlockText.GlyphWidth * MenuTitleCell);
+        bool overLettersStale = !File.Exists(ToAbsolute(MenuOverLetterMeshPath(0)))
+            || MeshWidthDiffers(MenuOverLetterMeshPath(0), BlockText.GlyphWidth * MenuOverCell);
         bool arrowsStale = !File.Exists(ToAbsolute(MenuArrowStartMeshPath))
             || !File.Exists(ToAbsolute(MenuInlayStartMeshPath))
             // The hall's arrow re-lettered from NEXT to PREV: same banner, same
             // width, so only the path it is written to says it has changed.
             || !File.Exists(ToAbsolute(MenuArrowPrevMeshPath))
             || MeshWidthDiffers(MenuArrowStartMeshPath, ArrowOutlineWidth());
-        if (lettersStale || arrowsStale)
+        if (lettersStale || overLettersStale || arrowsStale)
         {
             if (lettersStale)
             {
@@ -865,6 +893,22 @@ public static class ArkanoidSetup
                             MenuTitleDepth, MenuTitleUvScale,
                             new Vector2(BlockText.GlyphCentreX(MenuTitleWord, i, MenuTitleCell), 0f)),
                         MenuLetterMeshPath(i));
+            }
+            if (overLettersStale)
+            {
+                Directory.CreateDirectory(ToAbsolute(MenuLettersMeshFolder));
+                for (int i = 0; i < MenuOverWord.Length; i++)
+                {
+                    // The space between the two words has nothing to draw, and
+                    // nothing stands there — a block over the gap would bounce
+                    // the ball off the middle of a word that isn't there.
+                    if (BlockText.Blank(MenuOverWord[i])) continue;
+                    AssetDatabase.CreateAsset(
+                        BlockText.BuildMesh($"Over{i}", BlockText.GlyphCells(MenuOverWord[i]), MenuOverCell,
+                            MenuTitleDepth, MenuTitleUvScale,
+                            new Vector2(BlockText.GlyphCentreX(MenuOverWord, i, MenuOverCell), 0f)),
+                        MenuOverLetterMeshPath(i));
+                }
             }
             if (arrowsStale)
             {
@@ -915,10 +959,8 @@ public static class ArkanoidSetup
         var drawnMenu = FindRootObject("MenuScreen");
         if (drawnMenu != null && MissingMenuMesh(drawnMenu.transform))
         {
-            var title = drawnMenu.transform.Find("MenuSlider/MenuBoard/MenuTitle");
-            for (int i = 0; title != null && i < MenuTitleWord.Length && i < title.childCount; i++)
-                title.GetChild(i).GetComponent<MeshFilter>().sharedMesh =
-                    AssetDatabase.LoadAssetAtPath<Mesh>(MenuLetterMeshPath(i));
+            foreach (var (drawn, mesh) in MenuLetters(drawnMenu.transform))
+                drawn.sharedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(mesh);
             foreach (var (path, mesh) in MenuMeshes)
             {
                 var drawn = drawnMenu.transform.Find(path);
@@ -1521,11 +1563,78 @@ public static class ArkanoidSetup
             return;
         }
         if (turningBallRoot != null) PrefabUtility.UnloadPrefabContents(turningBallRoot);
+
+        // Stage 83: the board a lost round comes to rest on. It is a screen of
+        // the menu like the title board and the hall of fame — same room, same
+        // fog, same ball still in play — standing between those two, because
+        // every arrow scrolls the way it points and this board's arrows lead to
+        // exactly them. The hall moves a screen further out to make the room.
+        //
+        // Nothing else of the menu changes, so this is an edit in place rather
+        // than one of stage 50's wholesale rebuilds; stage 42's builder authors
+        // the board directly, so a from-scratch run never reaches this stage.
+        var menuWithBoards = FindRootObject("MenuScreen");
+        var boardSlider = menuWithBoards != null
+            ? menuWithBoards.transform.Find("MenuSlider")
+            : null;
+        if (boardSlider != null && boardSlider.Find("MenuOver") == null)
+        {
+            var standingHall = boardSlider.Find("MenuHall");
+            if (standingHall != null)
+                standingHall.localPosition = new Vector3(MenuHallBoardX, 0f, 0f);
+            var builtOver = BuildGameOverBoard(boardSlider, menuTitleMaterial, menuLabelMaterial);
+            var overPanel = Object.FindAnyObjectByType<MainMenuPanel>(FindObjectsInactive.Include);
+            if (overPanel != null)
+            {
+                var overPanelSo = new SerializedObject(overPanel);
+                overPanelSo.FindProperty("over").objectReferenceValue = builtOver;
+                overPanelSo.ApplyModifiedPropertiesWithoutUndo();
+            }
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("[ArkanoidSetup] Stage 83: built the game over board (scene left dirty).");
+            return;
+        }
+
+        // Stage 84: persist stage 83, gated on the scene file not yet naming the
+        // board — the new state's own signature rather than the hall's old
+        // place, which is a position the slider's boards could legitimately
+        // stand at again.
+        if (!File.ReadAllText(ToAbsolute(scene.path)).Contains("MenuOver"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 84: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 85: the game over board's score goes white. Stage 83 cut it from
+        // the title's masonry like the words above it, where the hall's plaque
+        // has always drawn a name in stone and its score in the pale MenuLabel —
+        // a name is lettering and a score is a readout, and what they are cut
+        // from is what tells them apart. The board is the plaque's shape, so it
+        // is the plaque's materials too.
+        //
+        // The guard is the material the line is wearing, which is an in-memory
+        // fact, so like stages 70 and 76 this saves on its own tick rather than
+        // through a paired stage: a disk-side gate would have to key on a
+        // material guid the arrows' own lettering carries all over this scene.
+        var builtOverBoard = FindRootObject("MenuScreen");
+        var overScore = builtOverBoard != null
+            ? builtOverBoard.transform.Find("MenuSlider/MenuOver/OverScore")
+            : null;
+        var overScoreRenderer = overScore != null ? overScore.GetComponent<MeshRenderer>() : null;
+        if (overScoreRenderer != null && overScoreRenderer.sharedMaterial != menuLabelMaterial)
+        {
+            overScoreRenderer.sharedMaterial = menuLabelMaterial;
+            EditorSceneManager.MarkSceneDirty(scene);
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 85: made the game over board's score white and queued a scene save.");
+            return;
+        }
     }
 
     // Every menu mesh stage 40 writes over, against the object that draws it.
-    // The title's eight letters are handled apart from this, since they are one
-    // mesh per letter against one child per letter.
+    // The authored words' letters are handled apart from this (MenuLetters),
+    // since they are one mesh per letter against one child per letter.
     static readonly (string Object, string Mesh)[] MenuMeshes =
     {
         ("MenuSlider/MenuBoard/OptionStart", MenuArrowStartMeshPath),
@@ -1536,15 +1645,46 @@ public static class ArkanoidSetup
         ("MenuSlider/MenuBoard/OptionRecords/ArrowInlay", MenuInlayHallMeshPath),
         ("MenuSlider/MenuHall/OptionPrev/ArrowInlay", MenuInlayPrevMeshPath),
         ("MenuSlider/MenuHall/OptionBack/ArrowInlay", MenuInlayBackMeshPath),
+        // The game over board's two arrows share their banners with the boards
+        // above — the same two words on the same two shapes — so rewriting
+        // either mesh nulls the reference here as well as there.
+        ("MenuSlider/MenuOver/OptionHall", MenuArrowHallMeshPath),
+        ("MenuSlider/MenuOver/OptionBack", MenuArrowBackMeshPath),
+        ("MenuSlider/MenuOver/OptionHall/ArrowInlay", MenuInlayHallMeshPath),
+        ("MenuSlider/MenuOver/OptionBack/ArrowInlay", MenuInlayBackMeshPath),
     };
+
+    // Every block letter the menu draws, paired with the mesh asset it should be
+    // drawing it with: the two authored words, ARKANOID on the title board and
+    // GAME OVER on the game over board. (The hall's plaque and that board's
+    // score are built at runtime, so there is nothing there to lose or put
+    // back.) A word's blanks have no mesh, so the letters standing under it are
+    // walked alongside the characters that have one rather than by child index.
+    static List<(MeshFilter Drawn, string Mesh)> MenuLetters(Transform menu)
+    {
+        var letters = new List<(MeshFilter, string)>();
+        Collect(menu.Find("MenuSlider/MenuBoard/MenuTitle"), MenuTitleWord, MenuLetterMeshPath);
+        Collect(menu.Find("MenuSlider/MenuOver/MenuOverWord"), MenuOverWord, MenuOverLetterMeshPath);
+        return letters;
+
+        void Collect(Transform word, string text, System.Func<int, string> mesh)
+        {
+            if (word == null) return;
+            int child = 0;
+            for (int i = 0; i < text.Length && child < word.childCount; i++)
+            {
+                if (BlockText.Blank(text[i])) continue;
+                var filter = word.GetChild(child++).GetComponent<MeshFilter>();
+                if (filter != null) letters.Add((filter, mesh(i)));
+            }
+        }
+    }
 
     // Whether anything the menu draws has lost the mesh it draws it with.
     static bool MissingMenuMesh(Transform menu)
     {
-        var title = menu.Find("MenuSlider/MenuBoard/MenuTitle");
-        if (title != null)
-            foreach (var letter in title.GetComponentsInChildren<MeshFilter>(true))
-                if (letter.sharedMesh == null) return true;
+        foreach (var (drawn, _) in MenuLetters(menu))
+            if (drawn.sharedMesh == null) return true;
         foreach (var (path, _) in MenuMeshes)
         {
             var drawn = menu.Find(path);
@@ -1731,6 +1871,12 @@ public static class ArkanoidSetup
     }
 
     static string MenuLetterMeshPath(int index) => $"{MenuLettersMeshFolder}/Letter{index}.asset";
+
+    // The game over board's own letters, at its own cell. Numbered by the
+    // letter's place in the word, blanks included, so the space between GAME and
+    // OVER simply has no mesh of its own rather than shifting the numbering of
+    // everything after it.
+    static string MenuOverLetterMeshPath(int index) => $"{MenuLettersMeshFolder}/Over{index}.asset";
 
     // Whether a built mesh is still the size the constants now call for, which
     // is how the menu's geometry stage notices that a size was retuned.
@@ -2731,6 +2877,7 @@ public static class ArkanoidSetup
             MenuInlayHallMeshPath, labelMaterial);
 
         BuildHallOfFame(slider.transform, titleMaterial, labelMaterial);
+        var overBoard = BuildGameOverBoard(slider.transform, titleMaterial, labelMaterial);
 
         // Everything the player actually drives, outside the slider so it stays
         // put while the screens move behind it.
@@ -2772,6 +2919,7 @@ public static class ArkanoidSetup
         menuSo.FindProperty("title").objectReferenceValue = title.transform;
         menuSo.FindProperty("hall").objectReferenceValue =
             slider.transform.Find("MenuHall").GetComponent<HallOfFame>();
+        menuSo.FindProperty("over").objectReferenceValue = overBoard;
         menuSo.FindProperty("paddle").objectReferenceValue = menuPaddle;
         menuSo.FindProperty("ball").objectReferenceValue = menuBall;
         menuSo.ApplyModifiedPropertiesWithoutUndo();
@@ -2820,18 +2968,19 @@ public static class ArkanoidSetup
     // menu on the right. Both lines are empty here — the names are only known at
     // runtime, so HallOfFame builds their meshes itself.
     //
-    // It sits a screen's width to the *left* of the board, so that the
-    // left-pointing arrow that leads here scrolls left to reach it and the
-    // right-pointing one on it scrolls right to go back.
+    // It sits to the *left* of the board, so that the left-pointing arrow that
+    // leads here scrolls left to reach it and the right-pointing one on it
+    // scrolls right to go back — two screens' width now, with the board a lost
+    // round ends on standing between the two.
     static void BuildHallOfFame(Transform slider, Material nameMaterial, Material scoreMaterial)
     {
         var hall = new GameObject("MenuHall");
         hall.transform.SetParent(slider, false);
-        hall.transform.localPosition = new Vector3(-MainMenuPanel.ScreenSpacing, 0f, 0f);
+        hall.transform.localPosition = new Vector3(MenuHallBoardX, 0f, 0f);
         var component = hall.AddComponent<HallOfFame>();
 
-        var nameLine = CreateChampionLine(hall.transform, "ChampionName", HallNameY, nameMaterial);
-        var scoreLine = CreateChampionLine(hall.transform, "ChampionScore", HallScoreY, scoreMaterial);
+        var nameLine = CreateBlockLine(hall.transform, "ChampionName", HallNameY, nameMaterial);
+        var scoreLine = CreateBlockLine(hall.transform, "ChampionScore", HallScoreY, scoreMaterial);
         var previous = CreateArrowOption(hall.transform, "OptionPrev", MainMenuOption.PreviousRecord,
             -MenuArrowX, HallArrowY, false, MenuOptionRecordsMaterialPath, MenuArrowPrevMeshPath,
             MenuInlayPrevMeshPath, scoreMaterial);
@@ -2846,17 +2995,76 @@ public static class ArkanoidSetup
         hallSo.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    // A line of the plaque: empty here, since the champion is only known at
-    // runtime. HallOfFame hangs one hittable block per symbol off it and takes
-    // the material for them from this renderer, so the line object itself is the
-    // anchor and the look of the line rather than a mesh of its own.
-    static MeshFilter CreateChampionLine(Transform parent, string name, float y, Material material)
+    // A line of lettering nobody can author: a champion's name or score, or the
+    // score a round was just lost with. Empty here — `BlockLine` hangs one
+    // hittable block per symbol off it at runtime and takes the material for
+    // them from this renderer, so the line object itself is the anchor and the
+    // look of the line rather than a mesh of its own.
+    static MeshFilter CreateBlockLine(Transform parent, string name, float y, Material material)
     {
         var go = new GameObject(name);
         go.transform.SetParent(parent, false);
         go.transform.localPosition = new Vector3(0f, y, MenuPlaneZ);
         go.AddComponent<MeshRenderer>().sharedMaterial = material;
         return go.AddComponent<MeshFilter>();
+    }
+
+    // The board a lost round comes to rest on: GAME OVER over the score it ended
+    // with, the hall of fame one arrow to the left and the menu one to the right.
+    // It stands between those two inside the slider, because every arrow scrolls
+    // the way it points and those are the two places this board leads.
+    //
+    // The words are authored here exactly as the title's letters are — one
+    // hittable block per letter, the space between them skipped, since a
+    // collider standing in the gap would bounce the ball off nothing. The score
+    // line is left empty: the number is only known when a round ends, so
+    // GameOverBoard builds it at runtime the way the hall builds a champion.
+    static GameOverBoard BuildGameOverBoard(Transform slider, Material wordMaterial, Material labelMaterial)
+    {
+        var over = new GameObject("MenuOver");
+        over.transform.SetParent(slider, false);
+        over.transform.localPosition = new Vector3(MenuOverBoardX, 0f, 0f);
+        var component = over.AddComponent<GameOverBoard>();
+
+        // Tilted like the title, and for the title's reason: the letters' tops
+        // and sides catch the light and read as blocks rather than as a cutout.
+        // The tilt is about X, which 2D physics ignores.
+        var word = new GameObject("MenuOverWord");
+        word.transform.SetParent(over.transform, false);
+        word.transform.localPosition = new Vector3(0f, MenuOverWordY, MenuPlaneZ);
+        word.transform.localRotation = Quaternion.Euler(-8f, 0f, 0f);
+        for (int i = 0; i < MenuOverWord.Length; i++)
+        {
+            if (BlockText.Blank(MenuOverWord[i])) continue;
+            var letter = new GameObject($"Letter{i}-{MenuOverWord[i]}");
+            letter.transform.SetParent(word.transform, false);
+            letter.transform.localPosition =
+                new Vector3(BlockText.GlyphCentreX(MenuOverWord, i, MenuOverCell), 0f, 0f);
+            letter.AddComponent<MeshFilter>().sharedMesh =
+                AssetDatabase.LoadAssetAtPath<Mesh>(MenuOverLetterMeshPath(i));
+            letter.AddComponent<MeshRenderer>().sharedMaterial = wordMaterial;
+            letter.AddComponent<BoxCollider2D>().size =
+                new Vector2(BlockText.GlyphWidth * MenuOverCell, BlockText.GlyphHeight * MenuOverCell);
+            letter.AddComponent<MenuTitleBlock>();
+        }
+
+        // The words are stone and the number is white, which is the split the
+        // hall's plaque has always made: a name is lettering, a score is a
+        // readout, and the two are told apart by what they are cut from.
+        var scoreLine = CreateBlockLine(over.transform, "OverScore", MenuOverScoreY, labelMaterial);
+
+        CreateArrowOption(over.transform, "OptionHall", MainMenuOption.HallOfFame,
+            -MenuArrowX, MenuOverArrowY, false, MenuOptionRecordsMaterialPath, MenuArrowHallMeshPath,
+            MenuInlayHallMeshPath, labelMaterial);
+        CreateArrowOption(over.transform, "OptionBack", MainMenuOption.BackToMenu,
+            MenuArrowX, MenuOverArrowY, true, MenuOptionStartMaterialPath, MenuArrowBackMeshPath,
+            MenuInlayBackMeshPath, labelMaterial);
+
+        var overSo = new SerializedObject(component);
+        overSo.FindProperty("scoreLine").objectReferenceValue = scoreLine;
+        overSo.FindProperty("wordCell").floatValue = MenuOverCell;
+        overSo.ApplyModifiedPropertiesWithoutUndo();
+        return component;
     }
 
     static GameObject FindRootObject(string name)

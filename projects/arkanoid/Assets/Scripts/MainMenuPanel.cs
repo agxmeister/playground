@@ -20,13 +20,18 @@ public enum MainMenuOption { StartGame, HallOfFame, PreviousRecord, BackToMenu }
 // they would launch a round. The two arrows sit either side of the word, so a
 // launch straight up picks nothing.
 //
-// The menu is two screens side by side inside MenuSlider — the title board and
-// the hall of fame a screen's width to its left — and choosing one is travelled
-// to rather than cut to: the board being left flies out across the frame and
-// the one arriving rises out of the fog behind the playing plane (see
-// ScreenChange). The slider holds the layout; a change moves the boards.
-// The paddle and ball are outside the slider, so they stay put while the world
-// behind them moves.
+// The menu is three screens side by side inside MenuSlider — left to right, the
+// hall of fame, the board a lost round ends on (GameOverBoard) and the title
+// board — and choosing one is travelled to rather than cut to: the board being
+// left flies out across the frame and the one arriving rises out of the fog
+// behind the playing plane (see ScreenChange). The slider holds the layout; a
+// change moves the boards. The paddle and ball are outside the slider, so they
+// stay put while the world behind them moves.
+//
+// **That order in X is the order the arrows walk**, since every arrow scrolls
+// the way it points: the game over board's left arrow reaches the hall and its
+// right one the menu, which puts it between the two, and leaves the title
+// board's HALL OF FAME arrow travelling two screens past it to get there.
 //
 // The menu's room is closed on three sides by the frame itself: Border walls,
 // built here and laid along the left, right and top edges of whatever the
@@ -41,6 +46,7 @@ public class MainMenuPanel : MonoBehaviour
     [SerializeField] Transform slider;
     [SerializeField] Transform title;
     [SerializeField] HallOfFame hall;
+    [SerializeField] GameOverBoard over;
     [SerializeField] Paddle paddle;
     [SerializeField] Ball ball;
 
@@ -48,12 +54,12 @@ public class MainMenuPanel : MonoBehaviour
     // are the menu's own business now that it is a screen rather than a panel.
     public event System.Action<MainMenuOption> OptionChosen;
 
-    // How far apart the two screens sit inside the slider — comfortably more
-    // than the camera's frame is wide, so neither shows a corner of the other.
-    // The hall of fame sits this far to the *left* of the title board, because
-    // every arrow on the menu scrolls the way it points: the left-pointing HALL
-    // OF FAME arrow travels left to reach it, and the right-pointing one on the
-    // hall travels back right to the board.
+    // How far apart the screens sit inside the slider — comfortably more than
+    // the camera's frame is wide, so none of them shows a corner of another.
+    // They stand to the *left* of the title board, because every arrow on the
+    // menu scrolls the way it points: the left-pointing HALL OF FAME arrow
+    // travels left to reach the hall, and the right-pointing one on the hall
+    // travels back right to the board.
     public const float ScreenSpacing = 20f;
 
     // GameManager draws the shared "press SPACE to launch" prompt for this.
@@ -88,22 +94,38 @@ public class MainMenuPanel : MonoBehaviour
     // True from the hit that picks an option until the screen has finished
     // changing. Nothing else in the menu answers while it is set.
     bool busy;
-    bool showingHall;
     Vector3 paddleRest;
-    // Where the two screens were authored inside the slider. A change moves
-    // them itself now — out across the frame, and in again from under the plane
-    // — so this is what says where "in place" is.
-    Vector3 boardHome;
-    Vector3 hallHome;
+    // Where each of the slider's boards was authored. A change moves them
+    // itself — out across the frame, and in again from under the plane — so
+    // this is what says where "in place" is, and it is what a change is
+    // measured against rather than any spacing written down here: the boards
+    // are not all one screen apart.
+    readonly System.Collections.Generic.Dictionary<Transform, Vector3> boardHomes =
+        new System.Collections.Generic.Dictionary<Transform, Vector3>();
+    // Which board is standing in the frame. Everything a change does is written
+    // as "bring that one here" and everything a hit asks is "is this arrow on
+    // it", so this is the whole of the menu's state.
+    Transform current;
 
     Transform Board => title != null ? title.parent : null;
+
+    // The boards the slider holds, in the order they stand in X: the hall of
+    // fame, the board a lost round ends on, the title board.
+    System.Collections.Generic.IEnumerable<Transform> Boards()
+    {
+        if (hall != null) yield return hall.transform;
+        if (over != null) yield return over.transform;
+        if (Board != null) yield return Board;
+    }
+
+    Vector3 HomeOf(Transform board) =>
+        board != null && boardHomes.TryGetValue(board, out var home) ? home : Vector3.zero;
 
     void Awake()
     {
         // Where the paddle was authored: under the middle of the screen.
         if (paddle != null) paddleRest = paddle.transform.localPosition;
-        if (Board != null) boardHome = Board.localPosition;
-        if (hall != null) hallHome = hall.transform.localPosition;
+        foreach (var board in Boards()) boardHomes[board] = board.localPosition;
         if (slider != null)
             foreach (var option in slider.GetComponentsInChildren<MenuOption>(true))
                 authoredOptionX[option.transform] = option.transform.localPosition.x;
@@ -161,16 +183,33 @@ public class MainMenuPanel : MonoBehaviour
         if (paddle != null) paddle.FitTo(extents.x);
     }
 
-    public void Show()
+    public void Show() => Show(Board, 0);
+
+    // The way in from a lost round: the menu opens on the game over board rather
+    // than on the title board, with the score the round ended on read out under
+    // the words. Nothing else about it is different — the ball is served, the
+    // arrows are aimed at and the boards travel exactly as they do from the
+    // title screen, and one arrow to the right is the title screen.
+    public void ShowGameOver(int score) =>
+        Show(over != null ? over.transform : Board, score);
+
+    // Reopening the menu is the one moment the whole thing goes back to how it
+    // was built: every board back where it was authored, mended, and whichever
+    // one is being opened on standing in the frame.
+    void Show(Transform opening, int score)
     {
         gameObject.SetActive(true);
         busy = false;
-        showingHall = false;
-        ResetScreens();
+        ResetScreens(opening);
         if (hall != null) hall.Reload();
-        RestoreTitle();
+        // The score is a fact about the round that has just ended, so the board
+        // is only ever told it on the way in from one.
+        if (over != null && current == over.transform) over.Show(score);
         if (playGroup != null) playGroup.SetActive(true);
-        RestoreOptions();
+        // Mending a board in the frame is normally exactly what must not happen
+        // (see RestoreBoard); the menu opening is the exception, since there was
+        // nobody watching the last thing the ball did to it.
+        foreach (var board in Boards()) RestoreBoard(board);
         FitToFrame();
         if (paddle != null) paddle.transform.localPosition = paddleRest;
         ResetBall();
@@ -192,24 +231,37 @@ public class MainMenuPanel : MonoBehaviour
     // not be able to pick a second option on the way — and a refused arrow has
     // to survive the hit, since the only mending it would get is on the way in
     // to a board it is already standing on.
-    public bool OnOptionHit(MainMenuOption option)
+    public bool OnOptionHit(MenuOption arrow)
     {
-        if (busy) return false;
-        // An arrow belonging to the screen that isn't up can't be picked. Both
-        // screens live in the scene at once, and only the slide separates them.
-        if (showingHall != (option == MainMenuOption.PreviousRecord || option == MainMenuOption.BackToMenu))
-            return false;
+        if (busy || arrow == null) return false;
+        // An arrow belonging to a board that isn't up can't be picked: every
+        // board lives in the scene at once and only the slide separates them.
+        // Which board an arrow belongs to is *where it stands* rather than which
+        // choice it carries, now that HALL OF FAME and MENU each stand on two of
+        // them — the same two destinations, reached from either.
+        if (BoardOf(arrow.transform) != current) return false;
         busy = true;
-        StartCoroutine(CarryOut(option));
+        StartCoroutine(CarryOut(arrow));
         return true;
+    }
+
+    // The board something on the menu stands on: whichever of the slider's own
+    // children it hangs under.
+    Transform BoardOf(Transform part)
+    {
+        for (var at = part; at != null; at = at.parent)
+            if (at.parent == slider) return at;
+        return null;
     }
 
     // The pause is the point: the arrow breaks apart and its pieces fall before
     // the screen it leads to comes up, so the hit reads as a hit rather than as
     // an instant cut.
-    IEnumerator CarryOut(MainMenuOption option)
+    IEnumerator CarryOut(MenuOption arrow)
     {
         yield return new WaitForSeconds(ShatterPause);
+
+        var option = arrow.Option;
 
         // Starting a game hands the screen over to GameManager, and this menu
         // is switched off wholesale — nothing to put back.
@@ -224,17 +276,22 @@ public class MainMenuPanel : MonoBehaviour
         // read, and the board being left behind keeps whatever the ball did to
         // it until it is the one arriving. Nothing is mended once the movement
         // has started — see below.
+        // Both of these are reachable from more than one board now — the hall of
+        // fame from the title board and from the game over board, the menu from
+        // the hall and from the game over board — and they lead to the same
+        // place from either. Where the arrow was hit only decides how far the
+        // change has to travel, which ChangeTo works out for itself.
         switch (option)
         {
             case MainMenuOption.HallOfFame:
                 RestoreBoard(hall != null ? hall.transform : null);
-                yield return ChangeTo(true);
+                yield return ChangeTo(hall != null ? hall.transform : null);
                 break;
             case MainMenuOption.BackToMenu:
                 // The word's parent is the board: the two arrows stand beside
                 // it there, and they are mended with it.
-                RestoreBoard(title != null ? title.parent : null);
-                yield return ChangeTo(false);
+                RestoreBoard(Board);
+                yield return ChangeTo(Board);
                 break;
             case MainMenuOption.PreviousRecord:
                 // The champion doesn't change on the spot either: the plaque
@@ -258,7 +315,7 @@ public class MainMenuPanel : MonoBehaviour
         // The ball is left alone too — it has been playing on through the
         // change, and catching it to serve it again would be the one part of
         // the menu that stops for a screen.
-        RestoreOption(option);
+        RestoreOption(arrow);
         busy = false;
     }
 
@@ -268,21 +325,23 @@ public class MainMenuPanel : MonoBehaviour
     // across the frame in the playing plane, and the one arriving never crosses
     // the frame at all — it stands where it belongs, down in the fog, and rises
     // out of it (see ScreenChange). The slider is only the layout now.
-    IEnumerator ChangeTo(bool toHall)
+    IEnumerator ChangeTo(Transform target)
     {
-        showingHall = toHall;
-        if (slider == null) yield break;
+        if (slider == null || target == null || target == current) yield break;
 
-        // The hall is to the left, so reaching it carries everything right —
-        // which is the view travelling left, the way its arrow points.
-        float distance = toHall ? ScreenSpacing : -ScreenSpacing;
-        var hallBoard = hall != null ? hall.transform : null;
-        var leaving = new ScreenPiece(toHall ? Board : hallBoard);
-        var arriving = new ScreenPiece(toHall ? hallBoard : Board);
+        var leaving = new ScreenPiece(current);
+        var arriving = new ScreenPiece(target);
+
+        // A board to the left is reached by carrying everything right — which is
+        // the view travelling left, the way that board's arrow points. How far
+        // is the gap between the two boards rather than one screen's width,
+        // since they are not all one screen apart: the hall of fame stands two
+        // screens from the title board with the game over board between them.
+        float distance = HomeOf(current).x - HomeOf(target).x;
 
         yield return ScreenChange.FlyOut(leaving, distance);
 
-        // The screen that has gone is a screen's width off to one side. Handing
+        // The screen that has gone is that whole gap off to one side. Handing
         // that offset over to the slider, which is where the layout keeps it,
         // moves nothing on screen — the slider gains exactly what the screen
         // gives up — and carries the arriving screen into the frame, which is
@@ -290,8 +349,9 @@ public class MainMenuPanel : MonoBehaviour
         // of the picture from here on, and nothing should be seen there until
         // it rises.
         ScreenChange.Stage(arriving);
-        slider.localPosition = new Vector3(toHall ? ScreenSpacing : 0f, 0f, 0f);
+        slider.localPosition = new Vector3(-HomeOf(target).x, 0f, 0f);
         leaving.MoveTo(0f, 0f);
+        current = target;
 
         yield return ScreenChange.Rise(arriving, ball);
     }
@@ -303,12 +363,15 @@ public class MainMenuPanel : MonoBehaviour
     // fog: not there to be hit, wearing the fog's colour instead of its own and
     // casting no shadow. The menu is only ever reopened from the top, so this is
     // where all of that is undone.
-    void ResetScreens()
+    void ResetScreens(Transform opening)
     {
         if (slider == null) return;
-        slider.localPosition = Vector3.zero;
-        if (Board != null) Board.localPosition = boardHome;
-        if (hall != null) hall.transform.localPosition = hallHome;
+        foreach (var board in Boards()) board.localPosition = HomeOf(board);
+        // Which board the menu is opening on is the whole of where the slider
+        // has to stand: the layout puts that board at its home, and the slider
+        // takes it back off to bring it into the middle of the picture.
+        current = opening != null ? opening : Board;
+        slider.localPosition = new Vector3(-HomeOf(current).x, 0f, 0f);
         foreach (var collider in slider.GetComponentsInChildren<Collider2D>(true))
             collider.enabled = true;
         // Nothing else on the menu tints per instance, so clearing the block
@@ -371,16 +434,11 @@ public class MainMenuPanel : MonoBehaviour
             || viewport.y < -FrameMargin || viewport.y > 1f + FrameMargin;
     }
 
-    void RestoreTitle()
-    {
-        if (title == null) return;
-        foreach (Transform letter in title) letter.gameObject.SetActive(true);
-    }
-
     // One board made whole again — its lettering and the arrows standing beside
     // it. Called on a board that is about to travel into the frame, never on
     // one already in it: mending is invisible from off-screen, and that is the
-    // only way it should ever be seen.
+    // only way it should ever be seen. (The exception is the menu opening, when
+    // every board is mended at once and none of them has been looked at yet.)
     void RestoreBoard(Transform board)
     {
         if (board == null) return;
@@ -393,32 +451,16 @@ public class MainMenuPanel : MonoBehaviour
         if (hall != null) hall.RefreshOptions();
     }
 
-    // The arrow that carried out a choice, put back on its own. It shattered to
-    // make the choice, and without it the board it belongs to has one fewer way
-    // out than it was built with — unless it is the hall's own arrow and the
-    // plaque it led to is the last record, which RefreshOptions puts back down
-    // in the same breath.
-    void RestoreOption(MainMenuOption option)
+    // The arrow that carried out a choice, put back on its own — that one arrow
+    // rather than every arrow carrying the same choice, since the same two
+    // choices stand on two boards each and the ones the player did not hit have
+    // to keep whatever the ball did to them. It shattered to make the choice,
+    // and without it the board it belongs to has one fewer way out than it was
+    // built with — unless it is the hall's own arrow and the plaque it led to is
+    // the last record, which RefreshOptions puts back down in the same breath.
+    void RestoreOption(MenuOption arrow)
     {
-        if (slider == null) return;
-        foreach (var arrow in slider.GetComponentsInChildren<MenuOption>(true))
-            if (arrow.Option == option) arrow.gameObject.SetActive(true);
-        if (hall != null) hall.RefreshOptions();
-    }
-
-    // The arrow the player picked shattered itself off; put every option on
-    // both screens back. For reopening the menu, which is the one moment the
-    // whole thing goes back to how it was built. Searched with inactive objects
-    // included, since a shattered arrow is exactly the object that is switched
-    // off.
-    void RestoreOptions()
-    {
-        if (slider == null) return;
-        foreach (var option in slider.GetComponentsInChildren<MenuOption>(true))
-            option.gameObject.SetActive(true);
-        // ...except the one the hall of fame itself hides when the plaque has
-        // no older record to walk back to. Its own state is left alone: the
-        // record just walked back to must not be reset to the top of the book.
+        if (arrow != null) arrow.gameObject.SetActive(true);
         if (hall != null) hall.RefreshOptions();
     }
 }

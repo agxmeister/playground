@@ -136,7 +136,18 @@ public class GameManager : MonoBehaviour
         SetScore(score + DebrisPoints);
     }
 
-    void ShowMenu()
+    void ShowMenu() => ShowMenu(null);
+
+    // `finalScore` is the score a round was just lost with, and null for every
+    // other way in here. It says which of the menu's boards the player arrives
+    // on: a lost round comes to rest on the game over board, which reads that
+    // score out, and everything else opens on the title board. Either way this
+    // is the same menu, in the same state, with the same ball to serve — the
+    // game over board is a screen of the menu rather than an overlay over the
+    // round, so there is no end-screen state to sit in and no key to press to
+    // leave it. The player aims at an arrow: the hall of fame to the left, the
+    // title board (and START) to the right.
+    void ShowMenu(int? finalScore)
     {
         transitionFrame = Time.frameCount;
         // Nothing of the round survives into the menu. 2D physics ignores Z, so
@@ -152,7 +163,11 @@ public class GameManager : MonoBehaviour
         // cut rather than a journey: the menu's opaque backdrop comes up in the
         // same frame, and there is nothing to see travelling over.
         MoveViewTo(MenuViewX);
-        if (mainMenuPanel != null) mainMenuPanel.Show();
+        if (mainMenuPanel != null)
+        {
+            if (finalScore.HasValue) mainMenuPanel.ShowGameOver(finalScore.Value);
+            else mainMenuPanel.Show();
+        }
         state = State.Menu;
     }
 
@@ -398,7 +413,9 @@ public class GameManager : MonoBehaviour
                     && (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame);
                 if (pressedEnter) SubmitName();
                 break;
-            case State.GameOver:
+            // GameOver is an `endState` only: a lost round goes straight back to
+            // the menu, onto the board that says so, and the menu drives itself
+            // from there. Winning is still an overlay with a key to dismiss.
             case State.Won:
                 if (pressedSpace || pressedEscape) ShowMenu();
                 break;
@@ -485,12 +502,22 @@ public class GameManager : MonoBehaviour
 
     void ShowEndScreen()
     {
+        // A lost round ends on the menu's own game over board — a screen of the
+        // same room the title board stands in, arrived at rather than overlaid
+        // (see ShowMenu). Clearing the level still raises the old overlay: there
+        // is no board for a win, and one screen of the two being scene content
+        // is better than neither.
+        if (endState == State.GameOver)
+        {
+            ShowMenu(score);
+            return;
+        }
+
         transitionFrame = Time.frameCount;
         state = endState;
-        string message = endState == State.Won
-            ? $"YOU WIN! Score: {score} — press SPACE for the menu"
-            : $"GAME OVER — Score: {score} — press SPACE for the menu";
-        if (recordsPanel != null) recordsPanel.ShowRecords(RecordBook.Load(), message);
+        if (recordsPanel != null)
+            recordsPanel.ShowRecords(RecordBook.Load(),
+                $"YOU WIN! Score: {score} — press SPACE for the menu");
     }
 
     // The name is read key by key rather than through Keyboard.onTextInput,

@@ -76,6 +76,18 @@ public static class BlockText
         return cells;
     }
 
+    // Whether a glyph has nothing solid in it at all — which of the font's own
+    // symbols means the space. A word's blanks are skipped rather than built,
+    // wherever a word is built as one hittable block per symbol: there is
+    // nothing to draw there, and a collider standing in the gap between two
+    // words would bounce the ball off nothing.
+    public static bool Blank(char character)
+    {
+        foreach (var row in Glyph(character))
+            if (row.IndexOf('#') >= 0) return false;
+        return true;
+    }
+
     // A whole word's cells, with one blank column between glyphs.
     public static bool[,] WordCells(string word)
     {

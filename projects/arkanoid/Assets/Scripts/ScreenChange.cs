@@ -228,9 +228,18 @@ public static class ScreenChange
     // of the rally carrying on across a change.
     public static IEnumerator FlyOut(ScreenPiece piece, float distance)
     {
-        for (float t = 0f; t < FlyOutDuration; t += Time.deltaTime)
+        // How long it takes is measured off how far it has to go, at the rate a
+        // screen's width in FlyOutDuration sets. The menu's boards are not all
+        // one screen apart — the hall of fame stands two screens from the title
+        // board, with the board a lost round ends on between them — and a screen
+        // crossing the frame twice as fast to cover twice the ground reads as a
+        // different change rather than as a longer one.
+        float duration = FlyOutDuration
+            * Mathf.Abs(distance) / MainMenuPanel.ScreenSpacing;
+        if (duration <= 0f) yield break;
+        for (float t = 0f; t < duration; t += Time.deltaTime)
         {
-            piece.MoveTo(Mathf.SmoothStep(0f, distance, t / FlyOutDuration), 0f);
+            piece.MoveTo(Mathf.SmoothStep(0f, distance, t / duration), 0f);
             yield return null;
         }
         piece.MoveTo(distance, 0f);

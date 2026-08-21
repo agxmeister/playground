@@ -64,8 +64,6 @@ public class HallOfFame : MonoBehaviour
     // Only used if a line is missing, in which case there is no spacing to
     // measure; the authored lines sit 1.75 apart, which is where this comes from.
     const float FallbackCell = 0.2f;
-    const float LineDepth = 0.35f;
-    const float LineUvScale = 2f;
 
     // The champion doesn't swap on the spot: the one being left behind travels
     // out across the frame, and the next one rises out of the fog behind it —
@@ -211,27 +209,16 @@ public class HallOfFame : MonoBehaviour
     // new champion re-measures it, and the groups they hung off go with them.
     static void ClearPlaque(List<GameObject> symbols, List<Transform> groups)
     {
-        foreach (var symbol in symbols)
-        {
-            if (symbol == null) continue;
-            var filter = symbol.GetComponent<MeshFilter>();
-            // The meshes are this component's own, built and dropped as the
-            // plaque changes, so each one is destroyed with its symbol rather
-            // than left to the scene.
-            if (filter != null && filter.sharedMesh != null) Destroy(filter.sharedMesh);
-            Destroy(symbol);
-        }
-        symbols.Clear();
+        BlockLine.Clear(symbols);
         foreach (var group in groups)
             if (group != null) Destroy(group.gameObject);
         groups.Clear();
     }
 
-    // One hittable block per symbol rather than one mesh for the whole line, so
-    // a name and a score can be broken up the way the title can. The line object
-    // itself is only the anchor and the material the symbols wear; the UV origin
-    // is each symbol's place in the word, which keeps the masonry running across
-    // them as it does across the title's letters.
+    // One hittable block per symbol rather than one mesh for the whole line
+    // (BlockLine, shared with the game over board's score), so a name and a
+    // score can be broken up the way the title can. The line object itself is
+    // only the anchor and the material the symbols wear.
     //
     // The symbols hang off a group of their own rather than off the line, so
     // that a champion arriving and the champion they are replacing can be in
@@ -240,39 +227,12 @@ public class HallOfFame : MonoBehaviour
     {
         if (line == null || string.IsNullOrEmpty(word)) return;
         var renderer = line.GetComponent<MeshRenderer>();
-        var material = renderer != null ? renderer.sharedMaterial : null;
 
         var group = new GameObject("Champion");
         group.transform.SetParent(line.transform, false);
         groups.Add(group.transform);
 
-        for (int i = 0; i < word.Length; i++)
-        {
-            var cells = BlockText.GlyphCells(word[i]);
-            // A space has nothing to hit and no geometry to show.
-            if (IsBlank(cells)) continue;
-
-            float x = BlockText.GlyphCentreX(word, i, cell);
-            var symbol = new GameObject($"{lineName}{i}-{word[i]}");
-            symbol.transform.SetParent(group.transform, false);
-            symbol.transform.localPosition = new Vector3(x, 0f, 0f);
-            symbol.AddComponent<MeshFilter>().sharedMesh = BlockText.BuildMesh(
-                $"{lineName}{i}", cells, cell, LineDepth, LineUvScale, new Vector2(x, 0f));
-            symbol.AddComponent<MeshRenderer>().sharedMaterial = material;
-            // The glyph's whole 5 x 7 box, holes included, for the same reason
-            // the title's letters use one: a collider tracing the strokes would
-            // let the ball rattle around inside an O.
-            symbol.AddComponent<BoxCollider2D>().size =
-                new Vector2(BlockText.GlyphWidth * cell, BlockText.GlyphHeight * cell);
-            symbol.AddComponent<MenuTitleBlock>();
-            symbols.Add(symbol);
-        }
-    }
-
-    static bool IsBlank(bool[,] cells)
-    {
-        foreach (bool solid in cells)
-            if (solid) return false;
-        return true;
+        BlockLine.Build(group.transform, lineName, word, cell,
+            renderer != null ? renderer.sharedMaterial : null, symbols);
     }
 }

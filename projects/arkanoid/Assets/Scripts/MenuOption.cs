@@ -33,8 +33,11 @@ public class MenuOption : MonoBehaviour
         // change would strand the player on the title screen with no way to
         // reach the hall at all. Lettering is a toy and comes apart whenever it
         // is struck; the arrows are the controls.
+        // The panel is handed the arrow rather than the choice it carries: which
+        // board an arrow stands on is what says whether it is up to be picked,
+        // and the same choice stands on more than one of them.
         var panel = GetComponentInParent<MainMenuPanel>();
-        if (panel == null || !panel.OnOptionHit(option)) return;
+        if (panel == null || !panel.OnOptionHit(this)) return;
 
         Shatter();
     }
