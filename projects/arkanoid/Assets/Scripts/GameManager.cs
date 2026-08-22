@@ -191,6 +191,7 @@ public class GameManager : MonoBehaviour
         Debris.ClearAll();
         Ricochet.ClearAll();
         JetTrail.ClearAll();
+        PowerWave.ClearAll();
     }
 
     // Only StartGame ever reaches here: the menu's hall of fame is a screen of

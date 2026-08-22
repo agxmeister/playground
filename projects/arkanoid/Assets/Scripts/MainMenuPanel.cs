@@ -224,6 +224,7 @@ public class MainMenuPanel : MonoBehaviour
         Debris.ClearAll();
         Ricochet.ClearAll();
         JetTrail.ClearAll();
+        PowerWave.ClearAll();
     }
 
     // Called by MenuOption when the ball reaches it, and answering false is

@@ -204,6 +204,50 @@ public class Ball : MonoBehaviour
     // own rate, and it can only start dropping once nothing is holding it up.
     const float PlaneReturn = 2.5f;
 
+    // The push (see "The push is charged and timed" in CLAUDE.md, and
+    // Paddle.Charge for the half of it the player winds up). A charge let go of
+    // on the paddle at the moment the ball is caught is handed to the ball as
+    // speed, and this is where the two halves are reconciled: the paddle knows
+    // what it let go of and when, the ball knows when it was caught, and how
+    // much of the one became the other is the gap between the two times.
+    //
+    // How far off the catch a release may land and still be worth anything.
+    // Either side of it, and by the same amount: a release a shade *after* the
+    // catch counts exactly as much as one the same shade before, because a
+    // player timing a key to a bounce has no way of knowing which side of it
+    // they landed on, and a window that only opened backwards would punish half
+    // of every honest attempt. It is arithmetic rather than prescience — the
+    // ball waits out the window before it gives up on a catch, and a release
+    // that arrives inside it is applied to a ball that has already left.
+    //
+    // A third of a second is wide enough to be learnable and narrow enough that
+    // landing it is a thing the player did rather than a thing that happened.
+    // It is public because the paddle lapses its own release against the same
+    // number, and two windows that could drift apart would be a bug waiting.
+    public const float PunchWindow = 0.33f;
+
+    // What a full charge, perfectly timed, is worth: three times the speed the
+    // ball has ever had. The whole charge and none of the window's forgiveness
+    // is the only way to get all of it — anything less arrives somewhere
+    // between 1 and 3, which is the point of the mechanic.
+    const float PunchTopSpeed = 3f;
+
+    // How quickly the extra speed bleeds off, as a rate: this fraction of
+    // what is left goes every second, so a full push is half spent in `ln 2 /
+    // PunchDecay`, about a second, and back to the ball's own speed inside
+    // seven. It bleeds rather than counting down for the reason the spin does —
+    // a speed that ends on a particular frame reads as a switch being thrown —
+    // and the loud part of it is over quickly on purpose: a pushed ball is a
+    // shot, and a shot that stayed fast for a rally would make the paddle's own
+    // speed the thing that felt wrong.
+    const float PunchDecay = 0.7f;
+
+    // Below this much borrowed speed there is nothing left worth carrying, and
+    // the ball is put back on exactly its own speed. An exponential bleed never
+    // quite arrives, and a ball permanently a hair fast would be a lie told in
+    // every number downstream of `speed`.
+    const float PunchFloor = 0.02f;
+
     Rigidbody2D body;
     Renderer sphere;
     Transform followTarget;
@@ -239,6 +283,19 @@ public class Ball : MonoBehaviour
     // What the paddle's last drag scuffed into the ball, ±1 down to nothing.
     float spin;
 
+    // The borrowed speed a push put on the ball, as a fraction of its own on
+    // top of it: 0 is the ball the player already knows and PunchTopSpeed − 1 is
+    // a perfectly timed full charge. Everything about the ball's speed is read
+    // through `Speed` rather than `speed` because of it.
+    float punch;
+
+    // The paddle the ball was last caught on and when, kept only for as long as
+    // a release could still turn up for it. This is the ball's half of the
+    // handshake: it is set by the catch and spent by whichever comes first, a
+    // release or the window running out.
+    Paddle puncher;
+    float caughtAt;
+
     // The paddle's arcade bounce maps a hit's distance from the middle, as a
     // fraction of the paddle's half-width, straight onto the tangent of the
     // angle the ball leaves at (see OnCollisionEnter2D). The launch reads the
@@ -246,6 +303,13 @@ public class Ball : MonoBehaviour
     static float LaunchTangent => Mathf.Tan(LaunchAngle * Mathf.Deg2Rad);
 
     public bool IsAttached => followTarget != null;
+
+    // How fast the ball is actually travelling: its own speed plus whatever a
+    // push lent it. Every step renormalizes to this rather than to `speed`,
+    // which is what makes the push a single number the whole of the rally is
+    // read through — the angle floor, the pinned-ball test and the paddle's
+    // arcade bounce all get the boosted speed without knowing there is one.
+    float Speed => speed * (1f + punch);
 
     // How big the ball is drawn, which is the same all round: what tells
     // whatever is rising under it whether it is standing over it, and how far
@@ -289,6 +353,11 @@ public class Ball : MonoBehaviour
         // paddle mid-spin would sit there spinning.
         spin = 0f;
         body.angularVelocity = 0f;
+        // Including any speed a push lent the ball that was lost, and any
+        // release still waiting to be paid to it: a serve is the ball's own
+        // speed, always.
+        punch = 0f;
+        puncher = null;
         planeZ = paddle.position.z;
         planeOffset = 0f;
         pushed = 0f;
@@ -332,6 +401,7 @@ public class Ball : MonoBehaviour
         if (!IsAttached) return;
         followTarget = null;
         body.bodyType = RigidbodyType2D.Dynamic;
+        punch = 0f;
         body.linearVelocity = new Vector2(LaunchTangent, 1f).normalized * speed;
         // Rolled off to the right, the way it is aimed. A ball is rolled off a
         // paddle rather than let go of in mid-air, so it has no business
@@ -342,7 +412,65 @@ public class Ball : MonoBehaviour
 
     void Update()
     {
-        if (IsAttached) transform.position = followTarget.position + followOffset;
+        if (IsAttached)
+        {
+            transform.position = followTarget.position + followOffset;
+            return;
+        }
+
+        TakePush();
+    }
+
+    // The push, collected rather than delivered: the ball asks the paddle it
+    // was caught on whether the charge has been let go of yet, every frame,
+    // until either it has or the window is past. That is the way round it has to
+    // be, because the release can land *after* the catch and nothing at the
+    // moment of the catch can know whether it is about to.
+    //
+    // Which means a well-timed push arrives a frame or two into the ball's
+    // flight rather than at the bounce itself. Nothing downstream can tell:
+    // FixedUpdate renormalizes the ball to `Speed` every step, so raising it
+    // mid-flight is exactly the same act as raising it at the contact.
+    void TakePush()
+    {
+        if (puncher == null) return;
+
+        // The catch stays live for the whole window rather than being spent on
+        // the first release that turns up, because a release can land either
+        // side of it and the *nearer* one is the one the player meant. A charge
+        // let go of just too early is spent — it bursts, and the paddle starts
+        // winding a fresh one — and the player who then lets that one go on the
+        // bounce has timed the second one well. Taking the first and closing the
+        // books would hand the ball the worse of the two, measured: a release
+        // 0.30s early is worth 0.09 of a charge where the re-wound one on the
+        // bounce is worth 0.38 of one. So every release inside the window is
+        // read, and the best of them stands (see the clamp below).
+        if (Time.time - caughtAt > PunchWindow)
+        {
+            puncher = null;
+            return;
+        }
+
+        float charge = puncher.ReleasedCharge;
+        if (charge <= 0f) return;
+
+        // How far the release landed from the catch, either side of it, as a
+        // fraction of the window. A dead-on release hands the charge over
+        // whole; one at the very edge of the window hands over nothing, and the
+        // charge is spent all the same.
+        float miss = Mathf.Abs(puncher.ReleasedAt - caughtAt);
+        puncher.SpendRelease();
+
+        float taken = charge * Mathf.Clamp01(1f - miss / PunchWindow);
+        // The greater of the two rather than the sum, which does two jobs. Two
+        // pushes in a rally must not compound into a ball nothing can be done
+        // about — PunchTopSpeed is meant to be the fastest the ball is ever
+        // seen, so a fresh push on a ball still carrying one is a top-up and
+        // not a stack. And within a single catch it is what lets the better of
+        // two releases stand: the first is applied at once, so the surge lands
+        // on the bounce rather than a beat after it, and a nearer release
+        // arriving later in the window can only raise it.
+        punch = Mathf.Max(punch, taken * (PunchTopSpeed - 1f));
     }
 
     // After everything that moves the ball across the field — the rally is 2D
@@ -374,7 +502,16 @@ public class Ball : MonoBehaviour
         // where we found it — and the way out is the way off any surface, away
         // from the last one touched. This used to be a bail-out, which is what
         // made a pinned ball a permanent one.
-        if (velocity.sqrMagnitude < speed * PinnedSpeed * (speed * PinnedSpeed))
+        // The borrowed speed bleeds away first, so the step the push is spent
+        // in is already flying at what is left of it rather than at what it
+        // was — the same order the spin is spent in below.
+        if (punch > 0f)
+        {
+            punch *= Mathf.Exp(-PunchDecay * Time.fixedDeltaTime);
+            if (punch < PunchFloor) punch = 0f;
+        }
+
+        if (velocity.sqrMagnitude < Speed * PinnedSpeed * (Speed * PinnedSpeed))
         {
             body.linearVelocity = Steepen(velocity, StallEscapeAngle);
             return;
@@ -393,10 +530,10 @@ public class Ball : MonoBehaviour
         if (Mathf.Abs(spin) < MinSpin) spin = spin < 0f ? -MinSpin : MinSpin;
         body.angularVelocity = SpinHandedness * spin * RollSpeed;
 
-        if (Mathf.Abs(velocity.y) < speed * Mathf.Sin(MinAngle * Mathf.Deg2Rad))
+        if (Mathf.Abs(velocity.y) < Speed * Mathf.Sin(MinAngle * Mathf.Deg2Rad))
             velocity = Steepen(velocity, MinAngle);
 
-        body.linearVelocity = velocity.normalized * speed;
+        body.linearVelocity = velocity.normalized * Speed;
     }
 
     // The same heading, re-aimed to exactly `angle` off the horizontal: the
@@ -433,7 +570,7 @@ public class Ball : MonoBehaviour
     {
         float radians = angle * Mathf.Deg2Rad;
         float across = velocity.x < 0f ? -1f : 1f;
-        return new Vector2(across * Mathf.Cos(radians), escapeY * Mathf.Sin(radians)) * speed;
+        return new Vector2(across * Mathf.Cos(radians), escapeY * Mathf.Sin(radians)) * Speed;
     }
 
     void OnCollisionEnter2D(Collision2D collision)
@@ -469,6 +606,14 @@ public class Ball : MonoBehaviour
         var paddle = collision.collider.GetComponent<Paddle>();
         if (paddle == null) return;
 
+        // A catch is a catch: the moment is recorded before the corner hits
+        // below are handed back to the engine, because a push is about the
+        // paddle meeting the ball and not about where on the paddle it met it.
+        // Any release still owed to an earlier catch is dropped — the ball can
+        // only be pushed off the bounce it is on.
+        puncher = paddle;
+        caughtAt = Time.time;
+
         // Only hits on the paddle's flat top get the arcade angle override.
         // On the rounded corners the contact normal tilts away from straight
         // up, and the engine's reflection off the curve's normal stands.
@@ -485,7 +630,7 @@ public class Ball : MonoBehaviour
         float offset = (transform.position.x - collision.transform.position.x)
             / collision.collider.bounds.extents.x;
         offset = Mathf.Clamp(offset + paddle.Drift * TwistReach, -1f, 1f);
-        body.linearVelocity = new Vector2(offset, 1f).normalized * speed;
+        body.linearVelocity = new Vector2(offset, 1f).normalized * Speed;
 
         // The other half of the twist, and the half the player can see: the
         // drag is scuffed into the ball rather than only into its heading, and
