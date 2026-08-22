@@ -223,6 +223,7 @@ public class MainMenuPanel : MonoBehaviour
         gameObject.SetActive(false);
         Debris.ClearAll();
         Ricochet.ClearAll();
+        JetTrail.ClearAll();
     }
 
     // Called by MenuOption when the ball reaches it, and answering false is

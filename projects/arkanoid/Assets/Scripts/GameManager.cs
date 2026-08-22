@@ -190,6 +190,7 @@ public class GameManager : MonoBehaviour
         // way out, now that a round throws sparks off its borders too.
         Debris.ClearAll();
         Ricochet.ClearAll();
+        JetTrail.ClearAll();
     }
 
     // Only StartGame ever reaches here: the menu's hall of fame is a screen of
