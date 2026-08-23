@@ -62,7 +62,13 @@ public static class ArkanoidSetup
     const float BrickDepth = 0.6f;
     // Two half bricks plus the level's 0.14 gap fill one normal slot: 2 * 0.68 + 0.14 = 1.5.
     const float HalfBrickWidth = 0.68f;
-    const float RoundedBrickCornerRadius = 0.12f;
+    // Rounded corners are physics, not trim: the collider is the same rounded
+    // rectangle as the mesh, so a corner hit reflects off the curve. At 0.12 the
+    // top face was 84% flat and five hits in six came off it like a box. 0.2 is
+    // just under the half-height ceiling (BrickHeight / 2 = 0.25, at which the
+    // ends are full semicircles and the shape is a stadium), so the curve is
+    // plainly there while the face stays a face.
+    const float RoundedBrickCornerRadius = 0.2f;
     const float RoundBrickDiameter = 0.5f;
     // The main menu's 3D content: an opaque backdrop box across the whole
     // frame, and in front of it a small playable scene — the word ARKANOID as
@@ -149,6 +155,51 @@ public static class ArkanoidSetup
     const string MenuOptionStartMaterialPath = MaterialsFolder + "/MenuOptionStart.mat";
     const string MenuOptionRecordsMaterialPath = MaterialsFolder + "/MenuOptionRecords.mat";
     const string MenuLabelMaterialPath = MaterialsFolder + "/MenuLabel.mat";
+
+    // The nine block materials, one asset each. What a block is made of decides
+    // both how it looks and how many hits it takes (BlockMaterials), so the look
+    // is authored here beside the rest of the project's assets and the rule
+    // lives with the enum.
+    //
+    // Colours are written in sRGB and converted once with .linear on the way to
+    // the shader: the project renders in linear colour space, so a colour handed
+    // to a material from script is taken as already-linear and comes out paler
+    // and less saturated than the number reads.
+    static readonly (BlockMaterial Kind, Color Color, float Metallic, float Smoothness, Color Emission)[]
+        BlockMaterialLooks =
+    {
+        // Not armour but a rule, so it is the one block that does not look like
+        // a solid: translucent and lit from within, which is the only thing on
+        // the grid that says "this is not yours to break".
+        (BlockMaterial.ForceField, new Color(0.20f, 0.60f, 1.00f, 0.45f), 0f, 0.90f, new Color(0.06f, 0.25f, 0.50f)),
+        (BlockMaterial.Polymer, new Color(0.88f, 0.89f, 0.86f, 1f), 0f, 0.15f, Color.black),
+        (BlockMaterial.Ceramics, new Color(0.93f, 0.90f, 0.80f, 1f), 0f, 0.08f, Color.black),
+        // Magenta and lit, because it is the other block that behaves rather
+        // than merely resists, and the two specials should be findable at a
+        // glance in a grid of metals.
+        (BlockMaterial.Antimatter, new Color(0.85f, 0.15f, 0.65f, 1f), 0f, 0.50f, new Color(0.55f, 0.05f, 0.40f)),
+        (BlockMaterial.Titanium, new Color(0.62f, 0.64f, 0.68f, 1f), 0.85f, 0.45f, Color.black),
+        (BlockMaterial.Crystal, new Color(0.35f, 0.85f, 0.80f, 0.62f), 0f, 0.95f, new Color(0.03f, 0.12f, 0.11f)),
+        // Inconel and Waspaloy are both nickel alloys and would read as the same
+        // block if they were only "grey metal": the gold heat-tint against the
+        // near-black is what tells a x3 from a x4 across the field.
+        (BlockMaterial.Inconel, new Color(0.66f, 0.58f, 0.44f, 1f), 0.9f, 0.55f, Color.black),
+        (BlockMaterial.Waspaloy, new Color(0.38f, 0.37f, 0.43f, 1f), 0.80f, 0.60f, Color.black),
+        // The top of the ladder is the block that returns nothing at all — and
+        // getting there means making it a *metal*, which is the opposite of how
+        // it was first written. A non-metal in URP always carries a dielectric
+        // specular floor of about 4% reflectance, which is a good 0.22 in sRGB:
+        // a matte block with an albedo of nothing still comes out mid-grey, and
+        // the first attempt at this one came out lighter than the x4 below it.
+        // A metal has no such floor — its reflectance *is* its base colour — so
+        // full metallic over near-black, barely smooth enough to catch anything,
+        // is the only way to a block that genuinely reflects nothing. Waspaloy
+        // keeps a plain highlight precisely so this one can be the absence of
+        // one.
+        (BlockMaterial.Neutronium, new Color(0.020f, 0.020f, 0.026f, 1f), 1f, 0.05f, Color.black),
+    };
+
+    static string BlockMaterialPath(BlockMaterial kind) => MaterialsFolder + "/Block" + kind + ".mat";
     // Both options are arrow banners rather than labelled slabs: a body wide
     // enough to carry the option's name, drawn out to a point at one end, with
     // rounded corners. START points right, out of the word, and HALL OF FAME
@@ -1630,6 +1681,132 @@ public static class ArkanoidSetup
             Debug.Log("[ArkanoidSetup] Stage 85: made the game over board's score white and queued a scene save.");
             return;
         }
+
+        // Stage 86: the nine block materials. A block's colour used to be
+        // something the round painted on at spawn — one white Brick.mat tinted
+        // per instance — which made the look and the hardness two unrelated
+        // facts that a level had to remember to keep in step. They are one fact
+        // now: the material is the look *and* the multiplier on the shape's own
+        // hardness, so a player reads how many hits a block owes them off what
+        // it is made of. Assets rather than tints, so blocks of a material still
+        // batch, which is what the property block was there to protect.
+        if (!File.Exists(ToAbsolute(BlockMaterialPath(BlockMaterial.Polymer))))
+        {
+            Directory.CreateDirectory(ToAbsolute(MaterialsFolder));
+            foreach (var look in BlockMaterialLooks)
+                CreateBlockMaterial(BlockMaterialPath(look.Kind),
+                    look.Color, look.Metallic, look.Smoothness, look.Emission);
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[ArkanoidSetup] Stage 86: wrote {BlockMaterialLooks.Length} block materials.");
+            return;
+        }
+
+        // Stage 87: hand them to the GameManager, in the enum's own order, since
+        // BlockMaterial is the index into the array. This is a standing repair
+        // like stage 70, not a one-off wiring: rewriting a material asset over
+        // one already referenced destroys the object the scene was pointing at,
+        // so the slot goes null rather than following the new material into the
+        // same file — and retuning a block's look means exactly that rewrite.
+        // The guard therefore reads the array's *contents*, not merely its
+        // length, which a first version got wrong and which left a whole grid
+        // wearing the prefabs' old white material with nine perfectly good
+        // materials sitting beside it.
+        //
+        // An in-memory fact, so like stages 70, 76 and 85 this saves on its own
+        // tick rather than through a paired stage — a disk-side gate would have
+        // to key on material guids, and these nine sit in a scene that already
+        // carries a dozen others.
+        var materialManager = FindRootObject("GameManager");
+        var materialManagerComponent = materialManager != null ? materialManager.GetComponent<GameManager>() : null;
+        if (materialManagerComponent != null)
+        {
+            var managerSo = new SerializedObject(materialManagerComponent);
+            var slot = managerSo.FindProperty("blockMaterials");
+            var materials = LoadBlockMaterials();
+            if (slot != null && materials != null && BlockMaterialsDiffer(slot, materials))
+            {
+                slot.arraySize = materials.Length;
+                for (int i = 0; i < materials.Length; i++)
+                    slot.GetArrayElementAtIndex(i).objectReferenceValue = materials[i];
+                managerSo.ApplyModifiedPropertiesWithoutUndo();
+                EditorSceneManager.MarkSceneDirty(scene);
+                EditorApplication.update += SaveSceneOnce;
+                Debug.Log("[ArkanoidSetup] Stage 87: wired the block materials and queued a scene save.");
+                return;
+            }
+        }
+
+        // Stage 88: the other half of the split. The shape carries a block's
+        // *base* hardness and the material multiplies it, so the half-width and
+        // round blocks are 1 where the full-slot slabs are 2 — small blocks are
+        // flimsy, which also answers for there being two of them in every slot
+        // they fill. The full-slot prefabs keep the field's own default of 2, so
+        // only these two need writing.
+        var smallBrickPaths = new[] { HalfBrickPrefabPath, RoundBrickPrefabPath };
+        foreach (var path in smallBrickPaths)
+        {
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            var brick = prefab != null ? prefab.GetComponent<Brick>() : null;
+            if (brick == null) continue;
+            if (new SerializedObject(brick).FindProperty("baseHardness").intValue == 1) continue;
+
+            var root = PrefabUtility.LoadPrefabContents(path);
+            var rootSo = new SerializedObject(root.GetComponent<Brick>());
+            rootSo.FindProperty("baseHardness").intValue = 1;
+            rootSo.ApplyModifiedPropertiesWithoutUndo();
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            PrefabUtility.UnloadPrefabContents(root);
+            Debug.Log($"[ArkanoidSetup] Stage 88: set {Path.GetFileName(path)}'s base hardness to 1.");
+            return;
+        }
+
+        // Stage 89: rebuild the rounded brick's mesh at the wider corner radius.
+        // Its corners were always real physics — a BoxCollider2D shrunk by the
+        // radius with edgeRadius filling it back out, so a corner hit reflects
+        // off the curve — but at 0.12 the top face was 84% flat and the curve
+        // almost never got a hit. The guard measures the radius off the mesh
+        // itself rather than trusting a file to be absent, since the path is
+        // the one it has always been written to.
+        if (RoundedBrickRadiusDiffers())
+        {
+            AssetDatabase.CreateAsset(
+                BuildRoundedPrismMesh("BrickRounded", BrickWidth, BrickHeight, BrickDepth,
+                    RoundedBrickCornerRadius, PaddleCornerSegments),
+                RoundedBrickMeshPath);
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[ArkanoidSetup] Stage 89: rebuilt the rounded brick mesh at radius {RoundedBrickCornerRadius}.");
+            return;
+        }
+
+        // Stage 90: put that mesh back on the prefab and resize the collider to
+        // match it. Stage 89 wrote over an asset the prefab was pointing at,
+        // which destroys the object rather than updating it — the reference goes
+        // null instead of following the new mesh into the same file — so this is
+        // the paired repair, and the collider is re-derived here because the
+        // visual and the physical rounding must never be two different numbers.
+        var roundedPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(RoundedBrickPrefabPath);
+        var roundedMeshAsset = AssetDatabase.LoadAssetAtPath<Mesh>(RoundedBrickMeshPath);
+        if (roundedPrefab != null && roundedMeshAsset != null)
+        {
+            var filter = roundedPrefab.GetComponent<MeshFilter>();
+            var box = roundedPrefab.GetComponent<BoxCollider2D>();
+            bool meshLost = filter != null && filter.sharedMesh != roundedMeshAsset;
+            bool colliderStale = box != null
+                && Mathf.Abs(box.edgeRadius - RoundedBrickCornerRadius) > 0.001f;
+            if (meshLost || colliderStale)
+            {
+                var root = PrefabUtility.LoadPrefabContents(RoundedBrickPrefabPath);
+                root.GetComponent<MeshFilter>().sharedMesh = roundedMeshAsset;
+                var collider = root.GetComponent<BoxCollider2D>();
+                collider.size = new Vector2(
+                    BrickWidth - 2f * RoundedBrickCornerRadius, BrickHeight - 2f * RoundedBrickCornerRadius);
+                collider.edgeRadius = RoundedBrickCornerRadius;
+                PrefabUtility.SaveAsPrefabAsset(root, RoundedBrickPrefabPath);
+                PrefabUtility.UnloadPrefabContents(root);
+                Debug.Log("[ArkanoidSetup] Stage 90: re-pointed the rounded brick's mesh and widened its collider.");
+                return;
+            }
+        }
     }
 
     // Every menu mesh stage 40 writes over, against the object that draws it.
@@ -2565,6 +2742,87 @@ public static class ArkanoidSetup
         material.SetColor("_BaseColor", ScreenChange.FogColor);
         material.SetFloat("_Smoothness", 0f);
         AssetDatabase.CreateAsset(material, path);
+    }
+
+    // One block material. Transparency is carried by the colour's alpha, which
+    // is what ForceField and Crystal need and what nothing else uses, so the
+    // opaque path stays the plain one.
+    static void CreateBlockMaterial(string path, Color color, float metallic, float smoothness, Color emission)
+    {
+        var material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        material.SetColor("_BaseColor", color.linear);
+        material.SetFloat("_Metallic", metallic);
+        material.SetFloat("_Smoothness", smoothness);
+
+        if (emission != Color.black)
+        {
+            material.EnableKeyword("_EMISSION");
+            material.SetColor("_EmissionColor", emission.linear);
+            material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+        }
+
+        if (color.a < 1f)
+        {
+            material.SetOverrideTag("RenderType", "Transparent");
+            material.SetFloat("_Surface", 1f);
+            material.SetFloat("_Blend", 0f);
+            // URP defaults a transparent material to its preserve-specular path,
+            // which sets _SrcBlend to One and blends the block *additively* — a
+            // force field that came out a solid glowing cyan rather than a pane
+            // anything could be seen through. Turned off, this is plain alpha.
+            material.SetFloat("_BlendModePreserveSpecular", 0f);
+            material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            material.SetFloat("_SrcBlendAlpha", (float)UnityEngine.Rendering.BlendMode.One);
+            material.SetFloat("_DstBlendAlpha", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            material.SetFloat("_ZWrite", 0f);
+            material.SetFloat("_AlphaClip", 0f);
+            material.DisableKeyword("_ALPHATEST_ON");
+            material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        AssetDatabase.CreateAsset(material, path);
+    }
+
+    // Whether the wired array is anything other than exactly these materials in
+    // exactly this order — a wrong length, or any slot holding the wrong asset
+    // or nothing at all.
+    static bool BlockMaterialsDiffer(SerializedProperty slot, Material[] materials)
+    {
+        if (slot.arraySize != materials.Length) return true;
+        for (int i = 0; i < materials.Length; i++)
+            if (slot.GetArrayElementAtIndex(i).objectReferenceValue != materials[i]) return true;
+        return false;
+    }
+
+    // Every block material, loaded in BlockMaterial's own order for the array
+    // GameManager holds. Null if any one of them is not readable back yet.
+    static Material[] LoadBlockMaterials()
+    {
+        var materials = new Material[BlockMaterials.Count];
+        for (int i = 0; i < materials.Length; i++)
+        {
+            materials[i] = AssetDatabase.LoadAssetAtPath<Material>(BlockMaterialPath((BlockMaterial)i));
+            if (materials[i] == null) return null;
+        }
+        return materials;
+    }
+
+    // Whether the rounded brick's mesh was built at a corner radius other than
+    // the one the constant now says. The outline's topmost vertices sit at
+    // x = +-(width / 2 - radius), so the mesh reports its own radius.
+    static bool RoundedBrickRadiusDiffers()
+    {
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(RoundedBrickMeshPath);
+        if (mesh == null) return false;
+
+        float top = float.MinValue, flat = 0f;
+        foreach (var vertex in mesh.vertices) top = Mathf.Max(top, vertex.y);
+        foreach (var vertex in mesh.vertices)
+            if (vertex.y > top - 0.001f) flat = Mathf.Max(flat, Mathf.Abs(vertex.x));
+
+        return Mathf.Abs(flat - (BrickWidth / 2f - RoundedBrickCornerRadius)) > 0.01f;
     }
 
     static void CreateLitMaterial(string path, Color color)

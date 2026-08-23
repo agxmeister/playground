@@ -2918,6 +2918,16 @@ MonoBehaviour:
   halfBrickPrefab: {fileID: 3031071559479064608, guid: eb6cdfa6a1f644902b4a7781dfd46d2a, type: 3}
   roundedBrickPrefab: {fileID: 338946938124375262, guid: ca5a65d1f4971460d9433c11e2795f08, type: 3}
   roundBrickPrefab: {fileID: 1620502014132224024, guid: 273cd1b9aa2da48419d4c4474dd05281, type: 3}
+  blockMaterials:
+  - {fileID: 2100000, guid: e30f92713e8744250baf9b5a545f74a7, type: 2}
+  - {fileID: 2100000, guid: 8d8340c6610f547ce91982e8c07f81ea, type: 2}
+  - {fileID: 2100000, guid: fd21e60b14ce84e259358e4b7b903661, type: 2}
+  - {fileID: 2100000, guid: de4d72aa449d94a468ef05fac9f85d79, type: 2}
+  - {fileID: 2100000, guid: f6bb2b2e398a74ed4a9e439ead0d752e, type: 2}
+  - {fileID: 2100000, guid: 0c5c1f5c2b1e14aa0907042de75ad27a, type: 2}
+  - {fileID: 2100000, guid: b9d8fd9233b6848ca93ccd3210e3e6ca, type: 2}
+  - {fileID: 2100000, guid: 582284e9a7dc2498cac3549303cb7a7d, type: 2}
+  - {fileID: 2100000, guid: 7448fa81cc1d3450d8fe0f94595278a1, type: 2}
   paddle: {fileID: 887666782}
   scoreBoard: {fileID: 685092864}
   recordsPanel: {fileID: 1310166190}

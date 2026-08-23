@@ -27,6 +27,10 @@ public class GameManager : MonoBehaviour
     [SerializeField] Brick halfBrickPrefab;
     [SerializeField] Brick roundedBrickPrefab;
     [SerializeField] Brick roundBrickPrefab;
+    // The nine block materials, in BlockMaterial's own order, wired by the
+    // editor setup script. An array rather than nine slots because the enum is
+    // the index and nothing here should be able to disagree with it.
+    [SerializeField] Material[] blockMaterials;
     [SerializeField] Paddle paddle;
     [SerializeField] ScoreBoard scoreBoard;
     [SerializeField] RecordsPanel recordsPanel;
@@ -41,31 +45,22 @@ public class GameManager : MonoBehaviour
     // would answer the arrow keys at once.
     [SerializeField] GameObject[] playfieldObjects;
 
-    [SerializeField] int rows = 5;
-    // Only used while the playfield has no measured frame to fill; how many
-    // columns actually fit is worked out in BuildLevel.
-    [SerializeField] int columns = 8;
     [SerializeField] int startingLives = 3;
 
-    static readonly Color[] rowColors =
-    {
-        new Color(0.91f, 0.30f, 0.24f),
-        new Color(0.95f, 0.61f, 0.07f),
-        new Color(0.95f, 0.83f, 0.18f),
-        new Color(0.18f, 0.80f, 0.44f),
-        new Color(0.20f, 0.60f, 0.86f),
-    };
-
-    // Hardness per row, matching rowColors: red bricks take 3 hits, blue take 1.
-    static readonly int[] rowHardness = { 3, 2, 2, 1, 1 };
-
-    // The brick shape used by each row. Half and Round bricks are half a slot
-    // wide, so those rows get two bricks per slot at half the points each.
+    // The level is a demonstration board: every shape crossed with every
+    // material, exactly once each. A row is a shape and a column is a material,
+    // in the enum's own order, so what a block is made of can be read off where
+    // it stands and the whole of what a block can be is on screen at once.
+    //
+    // Half and Round blocks stand one to a slot here rather than the two they
+    // used to, because "one of each" is the point of the board; they are half a
+    // slot wide, so they sit centred with daylight either side, which is its own
+    // way of saying they are the small ones.
     enum BrickKind { Normal, Half, Rounded, Round }
 
-    static readonly BrickKind[] rowKinds =
+    static readonly BrickKind[] boardKinds =
     {
-        BrickKind.Rounded, BrickKind.Normal, BrickKind.Half, BrickKind.Round, BrickKind.Normal,
+        BrickKind.Normal, BrickKind.Rounded, BrickKind.Half, BrickKind.Round,
     };
 
     enum State { Menu, Ready, Playing, EnteringName, GameOver, Won }
@@ -77,13 +72,6 @@ public class GameManager : MonoBehaviour
     // starting a round reads as one more step to the right rather than as a
     // different kind of change.
     const float TravelDuration = 0.6f;
-
-    // How much of the frame the brick grid leaves clear either side of itself —
-    // the same breathing space the walled field used to leave, now measured off
-    // the screen's edges instead of off the walls. Only the width is worked out
-    // this way: the camera's field of view is vertical, so the frame is the same
-    // height whatever the window's shape and the rows can stay where they were.
-    const float BrickEdgeMargin = 0.9f;
 
     // How far below the frame's bottom edge a ball has to fall to be lost. Far
     // enough that it has plainly gone rather than clipped the boundary.
@@ -287,54 +275,46 @@ public class GameManager : MonoBehaviour
         bricksLeft = 0;
 
         const float width = 1.5f, height = 0.5f, gap = 0.14f;
-        // Two half-width bricks plus the same gap fill one slot exactly:
-        // 2 * 0.68 + 0.14 = 1.5, with their centers at slot center ± 0.41.
-        const float halfOffset = (width + gap) / 4f;
-
-        // The field is as wide as the window now, so the grid is cut to fit it
-        // rather than authored: as many whole slots as the frame holds while
-        // keeping BrickEdgeMargin clear either side. The authored count stands
-        // in only while the room has no measured frame to fill.
-        int columnCount = columns;
-        if (playfield != null && playfield.HalfWidth > 0f)
-        {
-            float slot = width + gap;
-            columnCount = Mathf.Max(1,
-                Mathf.FloorToInt((2f * (playfield.HalfWidth - BrickEdgeMargin) + gap) / slot));
-        }
         const float y0 = 4.6f;
+
+        // One column per material and one row per shape, so the board is
+        // BlockMaterials.Count x boardKinds.Length blocks and nothing is cut to
+        // fit: nine slots span 9 * 1.64 - 0.14 = 14.62 units, which clears the
+        // frame's width at any aspect from 4:3 up. The grid used to be cut to
+        // however many whole slots the window held, and a board that dropped
+        // combinations on a narrow window would not be showing all of them.
+        int columnCount = BlockMaterials.Count;
         float x0 = -(columnCount - 1) * (width + gap) / 2f;
 
-        for (int row = 0; row < rows; row++)
+        for (int row = 0; row < boardKinds.Length; row++)
         {
-            var kind = rowKinds[row % rowKinds.Length];
-            int points = (rows - row) * 100;
-            int hardness = rowHardness[row % rowHardness.Length];
-            var color = rowColors[row % rowColors.Length];
+            var kind = boardKinds[row];
+            int points = (boardKinds.Length - row) * 100;
 
             for (int column = 0; column < columnCount; column++)
             {
                 var slot = new Vector3(x0 + column * (width + gap), y0 - row * (height + gap), 0f);
-                if (kind == BrickKind.Half || kind == BrickKind.Round)
-                {
-                    SpawnBrick(kind, slot + Vector3.left * halfOffset, points / 2, hardness, color);
-                    SpawnBrick(kind, slot + Vector3.right * halfOffset, points / 2, hardness, color);
-                }
-                else
-                {
-                    SpawnBrick(kind, slot, points, hardness, color);
-                }
+                SpawnBrick(kind, slot, points, (BlockMaterial)column);
             }
         }
     }
 
-    void SpawnBrick(BrickKind kind, Vector3 position, int points, int hardness, Color color)
+    void SpawnBrick(BrickKind kind, Vector3 position, int points, BlockMaterial material)
     {
         var brick = Instantiate(PrefabFor(kind), position, Quaternion.identity, brickHolder);
         brick.Points = points;
-        brick.Hardness = hardness;
-        brick.SetColor(color);
-        bricksLeft++;
+        brick.SetMaterial(material, MaterialAsset(material));
+        // A force field is never cleared, so a round that counted one would
+        // wait for ever to be won.
+        if (!brick.Unbreakable) bricksLeft++;
+    }
+
+    // Falls back to null — and so to whatever the prefab was wearing — while a
+    // material asset is not wired up, the same way PrefabFor does for shapes.
+    Material MaterialAsset(BlockMaterial material)
+    {
+        int index = (int)material;
+        return blockMaterials != null && index < blockMaterials.Length ? blockMaterials[index] : null;
     }
 
     // Falls back to the normal brick while a variant prefab is not wired up.

@@ -151,6 +151,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 3f01b35a60e99441aab72f957641f19f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Brick
+  baseHardness: 1
   crackRenderer: {fileID: 5042663409300813454}
   lightCrackSprites:
   - {fileID: 21300000, guid: 8df5bad99ce074a32953a9c8e30ac4e7, type: 3}
