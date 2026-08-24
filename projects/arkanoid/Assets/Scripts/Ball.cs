@@ -248,6 +248,15 @@ public class Ball : MonoBehaviour
     // every number downstream of `speed`.
     const float PunchFloor = 0.02f;
 
+    // How fast the ball has to be going, as a multiple of its own speed, before
+    // it starts burning (see the wake below). Half again over its own speed is
+    // the point at which a rally reads as *fast* rather than as the ball being
+    // hit slightly harder: a push of a fifth is a fifth, and a trail on one
+    // would be a trail behind almost every catch. It is also comfortably clear
+    // of `PunchFloor`, so the last flicker of a bleeding push cannot flash a
+    // frame of flame on its way out.
+    const float WakeSpeed = 1.5f;
+
     Rigidbody2D body;
     Renderer sphere;
     Transform followTarget;
@@ -288,6 +297,16 @@ public class Ball : MonoBehaviour
     // a perfectly timed full charge. Everything about the ball's speed is read
     // through `Speed` rather than `speed` because of it.
     float punch;
+
+    // Where the wake was laid from last frame — the back of the ball as it was —
+    // so each frame's plume is the ground actually covered rather than a puff
+    // dropped at a point. `burning` is what says there is a previous frame worth
+    // sweeping from: without it the plume that opened a wake would be laid from
+    // wherever the ball was the last time it happened to be fast, which on a
+    // fresh push is halfway across the field.
+    Vector3 wakeFrom;
+    bool burning;
+    float emberDebt;
 
     // The paddle the ball was last caught on and when, kept only for as long as
     // a release could still turn up for it. This is the ball's half of the
@@ -358,6 +377,11 @@ public class Ball : MonoBehaviour
         // speed, always.
         punch = 0f;
         puncher = null;
+        // And the wake it was carrying: a served ball is at its own speed, so
+        // there is nothing to burn, and a stale sweep-from would lay the first
+        // plume of the next push from wherever the last one ended.
+        burning = false;
+        emberDebt = 0f;
         planeZ = paddle.position.z;
         planeOffset = 0f;
         pushed = 0f;
@@ -419,6 +443,81 @@ public class Ball : MonoBehaviour
         }
 
         TakePush();
+        Wake();
+    }
+
+    // The trail behind a pushed ball, thrown off whenever it is travelling more
+    // than `WakeSpeed` times the one speed it has ever had. This is the ball's
+    // half of what the exhaust does for the paddle: a push is otherwise a fact
+    // about the rally that only the rally can feel — a ball at three times its
+    // speed looks exactly like the ball, only sooner somewhere else — and since
+    // the push bleeds away over the seconds after the catch (`PunchDecay`), the
+    // trail is also the only reading of how much of the shot is left.
+    //
+    // It burns blue where the paddle's rocket burns orange, which is the whole
+    // of what tells the two trails apart, and it is the same blue the charge was
+    // wound up in under the paddle (`PowerWave`): the gauge is the push going
+    // in and this is the push coming out.
+    void Wake()
+    {
+        // Read off `Speed` rather than off `punch` directly, so the threshold is
+        // written in the same units the player would describe it in — "half
+        // again as fast as normal" — and stays true if the ball's own speed is
+        // ever retuned.
+        float over = Speed / speed - WakeSpeed;
+        if (over <= 0f)
+        {
+            burning = false;
+            emberDebt = 0f;
+            return;
+        }
+
+        if (sphere == null) return;
+        var material = sphere.sharedMaterial;
+        if (material == null) return;
+
+        var heading = body.linearVelocity;
+        if (heading.sqrMagnitude <= 0f) return;
+
+        // Behind the ball is the way it is *not* going, which unlike the
+        // paddle's exhaust is not an axis: the ball flies at whatever angle it
+        // was last given, and curves while it does (`CurveRate`), so the wake
+        // has to be laid along the heading of the moment. It bends with the
+        // flight for free, since each frame's plume keeps the direction it was
+        // born with.
+        var back = -new Vector3(heading.x, heading.y, 0f).normalized;
+        // Everything the wake is sized by comes off the ball's own drawn body,
+        // as the paddle's comes off its, so the menu's scaled-down ball trails a
+        // scaled-down wake. The diameter is what stands in for the paddle's
+        // height here: it is the width of the thing the flame is coming out of.
+        float bore = Radius * 2f;
+        var nozzle = transform.position + back * Radius;
+
+        // The frame a wake opens on has no ground behind it to sweep, so it
+        // starts as a plume of the minimum length at the nozzle and the sweeping
+        // begins next frame.
+        if (!burning) wakeFrom = nozzle;
+        burning = true;
+
+        // 0 for a ball just over the threshold and 1 for one at the very top of
+        // what a perfectly timed full charge can buy it, which is what makes the
+        // trail a reading of the push rather than a light that is merely on: it
+        // lengthens, thickens and brightens with the speed, and thins back down
+        // as the push bleeds away under it.
+        float strength = Mathf.Clamp01(over / (PunchTopSpeed - WakeSpeed));
+
+        JetTrail.Plume(wakeFrom, nozzle, back, bore, Speed, strength, JetTrail.Plasma, material);
+        wakeFrom = nozzle;
+
+        // Embers on a cadence rather than one a frame, for the same reason the
+        // plume is a swept path: how many sparks a fast ball throws is a fact
+        // about the ball and not about how often the game is drawing it.
+        emberDebt += JetTrail.EmberRate * strength * Time.deltaTime;
+        while (emberDebt >= 1f)
+        {
+            emberDebt -= 1f;
+            JetTrail.Ember(nozzle, back, bore, strength, JetTrail.Plasma, material);
+        }
     }
 
     // The push, collected rather than delivered: the ball asks the paddle it

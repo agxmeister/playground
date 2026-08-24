@@ -321,13 +321,14 @@ public class Paddle : MonoBehaviour
         // drawing.
         var wasNozzle = nozzle + new Vector3(here - x, 0f, 0f);
 
-        JetTrail.Plume(wasNozzle, nozzle, back, height, Mathf.Abs(drive) * speed, strength, material);
+        JetTrail.Plume(wasNozzle, nozzle, back, height, Mathf.Abs(drive) * speed, strength,
+            JetTrail.Rocket, material);
 
         emberDebt += JetTrail.EmberRate * strength * Time.deltaTime;
         while (emberDebt >= 1f)
         {
             emberDebt -= 1f;
-            JetTrail.Ember(nozzle, back, height, strength, material);
+            JetTrail.Ember(nozzle, back, height, strength, JetTrail.Rocket, material);
         }
     }
 }
