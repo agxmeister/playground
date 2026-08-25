@@ -112,9 +112,16 @@ public class JetTrail : MonoBehaviour
     // One frame's worth of plume: the streak the nozzle laid down between where
     // it was last frame (`tailFrom`) and where it is now (`tailTo`), running
     // `back` — the way the exhaust goes, which is opposite the way the paddle
-    // is travelling. `height` is the paddle's drawn height and `strength` is 0
-    // for a paddle barely over cruising speed and 1 for one at the top of its
-    // thrust.
+    // is travelling. `strength` is 0 for a paddle barely over cruising speed
+    // and 1 for one at the top of its thrust.
+    //
+    // The exhaust is measured in two units rather than one, and they are two
+    // because they are answers to different questions. `bore` is how wide the
+    // nozzle is — the flame across, and the size of the sparks in it. `reach`
+    // is the unit the ribbon's *length* is counted in. The paddle hands its own
+    // height in for both, which is where the single number came from
+    // originally; the ball wants a wide short jet, and a wake measured in one
+    // unit could only be wide *and* long or narrow and short.
     //
     // It is the *swept path* rather than a puff at the nozzle, so consecutive
     // frames' streaks abut end to end however fast or slow the game is drawing.
@@ -122,13 +129,14 @@ public class JetTrail : MonoBehaviour
     // as a ribbon and at the ten a backgrounded editor manages it read as a
     // dotted line, which is a trail whose thickness is a fact about the
     // machine rather than about the paddle.
-    public static void Plume(Vector3 tailFrom, Vector3 tailTo, Vector3 back, float height,
-        float speed, float strength, Blaze blaze, Material material)
+    public static void Plume(Vector3 tailFrom, Vector3 tailTo, Vector3 back, float bore,
+        float reach, float speed, float strength, Blaze blaze, Material material)
     {
-        // Past the nozzle by a little, so the flame is attached to the paddle
-        // rather than trailing a gap behind it.
-        float length = Vector3.Distance(tailFrom, tailTo) + height * 0.8f;
-        float thick = height * Mathf.Lerp(0.7f, 1.15f, strength);
+        // Past the nozzle by a little, so the flame is attached to what is
+        // burning rather than trailing a gap behind it. In bores, because what
+        // it is covering is the mouth of the nozzle.
+        float length = Vector3.Distance(tailFrom, tailTo) + bore * 0.8f;
+        float thick = bore * Mathf.Lerp(0.7f, 1.15f, strength);
 
         var piece = NewPiece(material, tailTo + back * (length * 0.5f),
             Quaternion.LookRotation(Vector3.forward, back), blaze, strength);
@@ -144,11 +152,11 @@ public class JetTrail : MonoBehaviour
         // covers while a piece is alive, so a fixed life would give a flame
         // whose length was the paddle's speed — a yard of it while spooling up
         // and half the field at the top of the thrust. Length is the thing worth
-        // choosing, so it is chosen (in paddle heights, so the menu's smaller
-        // paddle gets a smaller flame) and the life falls out of it. The floor
-        // is for the paddle slowest over cruising speed, whose flame would
-        // otherwise last long enough to still be hanging there after it stopped.
-        float wanted = height * Mathf.Lerp(3.5f, 8f, strength);
+        // choosing, so it is chosen (in `reach`es, so the menu's smaller paddle
+        // gets a smaller flame) and the life falls out of it. The floor is for
+        // the paddle slowest over cruising speed, whose flame would otherwise
+        // last long enough to still be hanging there after it stopped.
+        float wanted = reach * Mathf.Lerp(3.5f, 8f, strength);
         piece.life = Mathf.Clamp(wanted / Mathf.Max(speed, 0.01f), 0.06f, 0.35f);
         // White-hot at birth, so the nozzle end of the ribbon is the bright end
         // and the exhaust reads as cooling away from the paddle rather than as
@@ -158,10 +166,12 @@ public class JetTrail : MonoBehaviour
     }
 
     // One ember, thrown out of the plume and left to cool. `nozzle` is the
-    // middle of the paddle's trailing edge; the rest is as Plume. The paddle
-    // asks for these on a cadence (`EmberRate`) rather than once a frame, for
-    // the same reason the plume is a swept path.
-    public static void Ember(Vector3 nozzle, Vector3 back, float height, float strength,
+    // middle of the paddle's trailing edge; the rest is as Plume, except that
+    // there is no `reach` here — a spark has no ribbon, so the bore is the only
+    // measurement it needs. The paddle asks for these on a cadence
+    // (`EmberRate`) rather than once a frame, for the same reason the plume is
+    // a swept path.
+    public static void Ember(Vector3 nozzle, Vector3 back, float bore, float strength,
         Blaze blaze, Material material)
     {
         var piece = NewPiece(material, nozzle, Random.rotation, blaze, strength);
@@ -172,9 +182,9 @@ public class JetTrail : MonoBehaviour
         var direction = back * Mathf.Cos(angle) + across * Mathf.Sin(angle);
         piece.velocity = direction * Random.Range(1.5f, 5f) * Mathf.Lerp(0.6f, 1f, strength);
         piece.velocity.z = Random.Range(-0.4f, 0.4f);
-        piece.transform.position += across * Random.Range(-0.5f, 0.5f) * height;
+        piece.transform.position += across * Random.Range(-0.5f, 0.5f) * bore;
 
-        float size = height * Random.Range(0.2f, 0.45f) * Mathf.Lerp(0.7f, 1.1f, strength);
+        float size = bore * Random.Range(0.2f, 0.45f) * Mathf.Lerp(0.7f, 1.1f, strength);
         piece.fromScale = new Vector3(size, size, size);
         piece.toScale = Vector3.zero;
         piece.life = Random.Range(0.15f, 0.32f);

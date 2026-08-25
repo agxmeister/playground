@@ -20,7 +20,10 @@ public class Brick : MonoBehaviour
     // touches this one — corners included — whatever shape either of them is.
     const float BlastReach = 0.2f;
 
-    int damage;
+    // Wear taken so far, and it is a float because a hit is worth what the ball
+    // was carrying rather than a flat 1 (see Ball.Damage): a ball at two and a
+    // half times its own speed does two and a half.
+    float damage;
     int crackVariant = -1;
     // Set the moment a block starts coming apart, and checked on the way in, so
     // that two antimatter blocks side by side detonate each other once rather
@@ -50,29 +53,30 @@ public class Brick : MonoBehaviour
         if (asset != null) GetComponent<MeshRenderer>().sharedMaterial = asset;
     }
 
-    void OnCollisionEnter2D(Collision2D collision)
+    // The hit, and whether it was the last one the block could take. The *ball*
+    // calls this now, out of its own collision handler, where the block used to
+    // read `ball.Damage` out of one of its own. Which side owns it matters since
+    // the ball started punching through what it breaks (see Ball.Punch): the
+    // answer here decides whether the ball carries on or comes off, and the two
+    // handlers for one contact run in an order nothing fixes — so the ball
+    // cannot be told by a block whose turn may already have passed.
+    //
+    // A force field takes no damage and shows no wear, and answers `false`: it
+    // was not destroyed, so the ball comes off it like any other bounce and
+    // keeps every bit of the speed it arrived with. Unbreakable that cost the
+    // ball its push would be a much smaller word.
+    public bool TakeDamage(float amount)
     {
-        var ball = collision.collider.GetComponent<Ball>();
-        if (ball == null) return;
-
-        TakeDamage(ball.Damage);
-    }
-
-    void TakeDamage(int amount)
-    {
-        // A force field takes no damage and shows no wear. The ball has already
-        // been turned around by the engine by the time this runs; refusing the
-        // hit is the whole of the behaviour.
-        if (traits.Unbreakable) return;
+        if (traits.Unbreakable) return false;
 
         damage += amount;
         if (damage >= Hardness)
         {
             Break();
-            return;
+            return true;
         }
 
-        if (crackRenderer == null || lightCrackSprites == null || lightCrackSprites.Length == 0) return;
+        if (crackRenderer == null || lightCrackSprites == null || lightCrackSprites.Length == 0) return false;
 
         // The variant (and its mirroring) is picked on the first hit and then
         // kept, so escalating damage reads as the same crack spreading.
@@ -82,8 +86,9 @@ public class Brick : MonoBehaviour
             crackRenderer.flipX = Random.value < 0.5f;
             crackRenderer.flipY = Random.value < 0.5f;
         }
-        float fraction = (float)damage / Hardness;
+        float fraction = damage / Hardness;
         crackRenderer.sprite = fraction <= 0.5f ? lightCrackSprites[crackVariant] : heavyCrackSprites[crackVariant];
+        return false;
     }
 
     // The block comes apart, however it was reached: by the ball wearing it

@@ -6,7 +6,14 @@ public class Ball : MonoBehaviour
     [SerializeField] float speed = 8f;
     [SerializeField] int damage = 1;
 
-    public int Damage => damage;
+    // What one hit is worth, which is what the ball is *carrying* rather than a
+    // flat number: the authored damage times how many of its own speeds it is
+    // travelling at. A ball at its own speed does the 1 it always did; a ball
+    // at two and a half times it does two and a half, and takes a slab of
+    // hardness 2 out in a single hit. So a push is not only a faster ball but a
+    // heavier one, which is what makes a charge worth aiming at a wall rather
+    // than only at a gap.
+    public float Damage => damage * SpeedMultiple;
 
     // The shallowest the ball is ever allowed to travel, off the horizontal.
     // It used to be a hair under 9°, which stopped the ball going *exactly*
@@ -211,14 +218,19 @@ public class Ball : MonoBehaviour
     // what it let go of and when, the ball knows when it was caught, and how
     // much of the one became the other is the gap between the two times.
     //
-    // How far off the catch a release may land and still be worth anything.
-    // Either side of it, and by the same amount: a release a shade *after* the
-    // catch counts exactly as much as one the same shade before, because a
-    // player timing a key to a bounce has no way of knowing which side of it
-    // they landed on, and a window that only opened backwards would punish half
-    // of every honest attempt. It is arithmetic rather than prescience — the
-    // ball waits out the window before it gives up on a catch, and a release
-    // that arrives inside it is applied to a ball that has already left.
+    // How long before the catch a release may land and still be worth anything.
+    // Before it only: the window opens backwards from the bounce and stops
+    // there. A charge let go of while the ball is still coming is a shot aimed
+    // early, and how early is what decides how much of it lands; a charge let go
+    // of once the ball has gone is a charge spent on nothing, however narrowly
+    // it missed.
+    //
+    // It opened both ways for a while, by the same amount either side, on the
+    // reasoning that a player timing a key to a bounce cannot know which side of
+    // it they landed on — so punishing the late half would punish half of every
+    // honest attempt. What that bought instead was a push applied to a ball that
+    // had already left, which is the one thing this mechanic cannot look like.
+    // Aiming ahead of the ball is the skill now.
     //
     // A third of a second is wide enough to be learnable and narrow enough that
     // landing it is a thing the player did rather than a thing that happened.
@@ -257,6 +269,21 @@ public class Ball : MonoBehaviour
     // frame of flame on its way out.
     const float WakeSpeed = 1.5f;
 
+    // The two sizes the wake is measured in, both as fractions of the ball's own
+    // diameter. `WakeBore` is the nozzle: how wide the flame is across, and how
+    // big the sparks in it are. `WakeReach` is the unit its ribbon's length is
+    // counted in.
+    //
+    // They are two numbers because the wake wants to be short *and* wide, and
+    // for a while it was measured in one, which only offered both or neither. At
+    // the ball's full diameter for both it read as a beam the ball was riding on
+    // the end of, and a third of it for both — the fix for that — gave the right
+    // length on a flame too thin to be one. So: a good deal narrower than the
+    // ball, because a flame as wide as its nozzle is not a flame, but plainly a
+    // jet rather than a thread.
+    const float WakeBore = 0.6f;
+    const float WakeReach = 1f / 3f;
+
     Rigidbody2D body;
     Renderer sphere;
     Transform followTarget;
@@ -288,6 +315,13 @@ public class Ball : MonoBehaviour
 
     // Consecutive bounces off vertical faces, counted for StallBounces.
     int flatBounces;
+
+    // The heading the ball took into the physics step, kept because a punch
+    // through a block has to *undo* a bounce the engine has already applied
+    // (see Punch) and the way in is the one thing that is gone by then.
+    // FixedUpdate runs before the step it belongs to, so what it leaves here is
+    // exactly what the ball was doing when it met whatever it met.
+    Vector2 wayIn;
 
     // What the paddle's last drag scuffed into the ball, ±1 down to nothing.
     float spin;
@@ -329,6 +363,12 @@ public class Ball : MonoBehaviour
     // read through — the angle floor, the pinned-ball test and the paddle's
     // arcade bounce all get the boosted speed without knowing there is one.
     float Speed => speed * (1f + punch);
+
+    // The same thing said as a multiple, which is the unit both halves of a
+    // break are written in: a hit is worth this many of the ball's own damage,
+    // and breaking a block costs this many back (see Punch). 1 is the ball the
+    // player already knows and nothing can take it below that.
+    public float SpeedMultiple => 1f + punch;
 
     // How big the ball is drawn, which is the same all round: what tells
     // whatever is rising under it whether it is standing over it, and how far
@@ -488,9 +528,12 @@ public class Ball : MonoBehaviour
         var back = -new Vector3(heading.x, heading.y, 0f).normalized;
         // Everything the wake is sized by comes off the ball's own drawn body,
         // as the paddle's comes off its, so the menu's scaled-down ball trails a
-        // scaled-down wake. The diameter is what stands in for the paddle's
-        // height here: it is the width of the thing the flame is coming out of.
-        float bore = Radius * 2f;
+        // scaled-down wake. Where the paddle hands its height in for both of
+        // them, the ball's two are its diameter taken in by two different
+        // fractions — a jet wider than it is measured long.
+        float diameter = Radius * 2f;
+        float bore = diameter * WakeBore;
+        float reach = diameter * WakeReach;
         var nozzle = transform.position + back * Radius;
 
         // The frame a wake opens on has no ground behind it to sweep, so it
@@ -506,7 +549,8 @@ public class Ball : MonoBehaviour
         // as the push bleeds away under it.
         float strength = Mathf.Clamp01(over / (PunchTopSpeed - WakeSpeed));
 
-        JetTrail.Plume(wakeFrom, nozzle, back, bore, Speed, strength, JetTrail.Plasma, material);
+        JetTrail.Plume(wakeFrom, nozzle, back, bore, reach, Speed, strength,
+            JetTrail.Plasma, material);
         wakeFrom = nozzle;
 
         // Embers on a cadence rather than one a frame, for the same reason the
@@ -520,55 +564,75 @@ public class Ball : MonoBehaviour
         }
     }
 
-    // The push, collected rather than delivered: the ball asks the paddle it
-    // was caught on whether the charge has been let go of yet, every frame,
-    // until either it has or the window is past. That is the way round it has to
-    // be, because the release can land *after* the catch and nothing at the
-    // moment of the catch can know whether it is about to.
+    // The push, worked out from a release the paddle was already holding: the
+    // window opens *before* the catch and nowhere else. A charge let go of a
+    // moment before the ball arrives is a shot aimed early and lands whole; one
+    // let go of after the ball has gone is a charge spent on nothing, because by
+    // then there is nothing left to push. It used to open both ways, by the same
+    // amount either side, on the reasoning that a player timing a key to a
+    // bounce cannot know which side of it they landed on — and that made a late
+    // release worth as much as an early one at the same distance, which is a
+    // push arriving after its own bounce.
     //
-    // Which means a well-timed push arrives a frame or two into the ball's
-    // flight rather than at the bounce itself. Nothing downstream can tell:
+    // It is still *collected* rather than read once at the contact, but only for
+    // as long as the two clocks could disagree. The catch is timed in
+    // FixedUpdate and the release in the paddle's own Update, in an order
+    // nothing here fixes, so a release the player made on the bounce can be
+    // stamped a frame the wrong side of it. `grace` below is exactly that slop
+    // and nothing more: a dead-on release must not be the one timing the game
+    // refuses.
+    //
+    // Which means a well-timed push can arrive a frame into the ball's flight
+    // rather than at the bounce itself. Nothing downstream can tell:
     // FixedUpdate renormalizes the ball to `Speed` every step, so raising it
     // mid-flight is exactly the same act as raising it at the contact.
     void TakePush()
     {
         if (puncher == null) return;
 
-        // The catch stays live for the whole window rather than being spent on
-        // the first release that turns up, because a release can land either
-        // side of it and the *nearer* one is the one the player meant. A charge
-        // let go of just too early is spent — it bursts, and the paddle starts
-        // winding a fresh one — and the player who then lets that one go on the
-        // bounce has timed the second one well. Taking the first and closing the
-        // books would hand the ball the worse of the two, measured: a release
-        // 0.30s early is worth 0.09 of a charge where the re-wound one on the
-        // bounce is worth 0.38 of one. So every release inside the window is
-        // read, and the best of them stands (see the clamp below).
-        if (Time.time - caughtAt > PunchWindow)
+        // How far apart the catch's clock and the release's clock can be while
+        // still describing the same instant: one physics step and one frame.
+        // Written as those two rather than as a number, because that is what it
+        // is — the ordering slop, not a window the player can play inside.
+        float grace = Time.fixedDeltaTime + Time.deltaTime;
+
+        float charge = puncher.ReleasedCharge;
+        if (charge <= 0f)
         {
+            // Nothing let go of at the moment of the catch, and only the slop is
+            // waited out: a charge released after that is released after the
+            // ball, and this catch is done with.
+            if (Time.time - caughtAt > grace) puncher = null;
+            return;
+        }
+
+        // How long before the catch the release landed, as a fraction of the
+        // window. A dead-on release hands the charge over whole; one at the very
+        // edge of the window hands over nothing.
+        float early = caughtAt - puncher.ReleasedAt;
+        if (early < -grace)
+        {
+            // Let go of after the ball had already left. Nothing is taken and
+            // nothing is spent here — the paddle lapses its own release, and
+            // this charge may yet be the one the player means for the next
+            // catch. The charge is gone from the gauge either way, which is the
+            // point of a mistimed push: it bursts, and there is nothing to show
+            // for it.
             puncher = null;
             return;
         }
 
-        float charge = puncher.ReleasedCharge;
-        if (charge <= 0f) return;
-
-        // How far the release landed from the catch, either side of it, as a
-        // fraction of the window. A dead-on release hands the charge over
-        // whole; one at the very edge of the window hands over nothing, and the
-        // charge is spent all the same.
-        float miss = Mathf.Abs(puncher.ReleasedAt - caughtAt);
         puncher.SpendRelease();
+        // One release to a catch. There is no waiting for a nearer one now, the
+        // way there was when the window opened both ways: every release still to
+        // come is later than this one, and later is worth nothing.
+        puncher = null;
 
-        float taken = charge * Mathf.Clamp01(1f - miss / PunchWindow);
-        // The greater of the two rather than the sum, which does two jobs. Two
-        // pushes in a rally must not compound into a ball nothing can be done
-        // about — PunchTopSpeed is meant to be the fastest the ball is ever
-        // seen, so a fresh push on a ball still carrying one is a top-up and
-        // not a stack. And within a single catch it is what lets the better of
-        // two releases stand: the first is applied at once, so the surge lands
-        // on the bounce rather than a beat after it, and a nearer release
-        // arriving later in the window can only raise it.
+        float taken = charge * Mathf.Clamp01(1f - Mathf.Max(early, 0f) / PunchWindow);
+        // The greater rather than the sum: two pushes in a rally must not
+        // compound into a ball nothing can be done about. PunchTopSpeed is meant
+        // to be the fastest the ball is ever seen, so a fresh push on a ball
+        // still carrying one is a top-up and not a stack.
         punch = Mathf.Max(punch, taken * (PunchTopSpeed - 1f));
     }
 
@@ -613,6 +677,7 @@ public class Ball : MonoBehaviour
         if (velocity.sqrMagnitude < Speed * PinnedSpeed * (Speed * PinnedSpeed))
         {
             body.linearVelocity = Steepen(velocity, StallEscapeAngle);
+            wayIn = body.linearVelocity;
             return;
         }
 
@@ -633,6 +698,10 @@ public class Ball : MonoBehaviour
             velocity = Steepen(velocity, MinAngle);
 
         body.linearVelocity = velocity.normalized * Speed;
+        // Written last, on every path out of here, because this is the heading
+        // the step that follows will be taken with — and the only record of it
+        // once a contact in that step has turned the ball around.
+        wayIn = body.linearVelocity;
     }
 
     // The same heading, re-aimed to exactly `angle` off the horizontal: the
@@ -672,6 +741,51 @@ public class Ball : MonoBehaviour
         return new Vector2(across * Mathf.Cos(radians), escapeY * Mathf.Sin(radians)) * Speed;
     }
 
+    // The hit on a block, and whether the ball went *through* it. A push is
+    // weight as well as speed (see Damage), so a ball carrying one can break a
+    // block outright — and a block broken outright is no longer a surface to
+    // come off.
+    //
+    // Breaking one costs the ball the block's hardness out of its speed, in the
+    // multiples both are counted in: a ball at 2.5 through a slab of hardness 2
+    // comes out the far side at 1 — its own speed, floored there, since nothing
+    // may leave the ball slower than the ball. Whatever is left over decides
+    // what happens next, and that is the whole rule:
+    //
+    // - Still over its own speed, and the ball carries straight on, through the
+    //   hole it just made and into whatever is behind it. Which is what makes a
+    //   full charge into a wall worth aiming: one shot can take a row.
+    // - Back down to its own speed, and it comes off the block it broke like
+    //   any other bounce. The push is spent, and the last thing it buys is the
+    //   block.
+    //
+    // Carrying on means undoing a bounce, because the engine resolved the
+    // contact before any of this ran: the ball is put back on `wayIn`, the
+    // heading it met the block with. Its *speed* is not restored with it —
+    // FixedUpdate renormalizes to `Speed` every step and `Speed` has just come
+    // down — so what carries on is the line and not the pace.
+    bool Punch(Collider2D hit)
+    {
+        var brick = hit.GetComponent<Brick>();
+        if (brick == null) return false;
+
+        // Read before the hit: a broken block is on its way out, and asking a
+        // corpse how hard it was is asking for trouble.
+        float hardness = brick.Hardness;
+        if (!brick.TakeDamage(Damage)) return false;
+
+        punch = Mathf.Max(0f, punch - hardness);
+        if (punch < PunchFloor) punch = 0f;
+        if (punch <= 0f) return false;
+
+        // A block gone through is progress by any reading, so the stalled-rally
+        // count starts again — it is there for a ball being batted between two
+        // faces, and this ball is going somewhere.
+        flatBounces = 0;
+        body.linearVelocity = wayIn.normalized * Speed;
+        return true;
+    }
+
     void OnCollisionEnter2D(Collision2D collision)
     {
         if (IsAttached || collision.contactCount == 0) return;
@@ -687,6 +801,26 @@ public class Ball : MonoBehaviour
         // return early — a vertical face does, a brick does — so this is taken
         // first, for every contact there is.
         spin = Mathf.Clamp(spin * BounceScrub + Nick(), -1f, 1f);
+
+        // A block is hit before any of the bounce is worked out, because
+        // whether there is a bounce at all is one of the things the hit
+        // decides.
+        if (Punch(collision.collider)) return;
+
+        // And it breaks the wake, for the same reason and in the same place:
+        // everything below can return early, and every contact there is turns
+        // the ball. A bounce is a corner in the flight, and a flame does not go
+        // round one — what the eye should see is the ribbon that was there
+        // dissolving along the heading it was laid on while a new one rises out
+        // of the ball on the new heading. Which is exactly what dropping
+        // `burning` buys: the plume that would otherwise be swept from the
+        // nozzle's place *before* the bounce to its place after it — one piece
+        // lying across the corner, the join that made the whole trail look
+        // hinged — is never laid, and the next frame starts a fresh sweep at
+        // the ball. The pieces already in the air are not touched: they are
+        // unparented and carry their own heading, so the old ribbon goes on
+        // thinning away where it was put, which is the dissolving half of it.
+        burning = false;
 
         // A vertical face returns the ball with its vertical component
         // untouched, so it makes no progress up or down the field. Enough of

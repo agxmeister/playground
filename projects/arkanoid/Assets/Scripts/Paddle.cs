@@ -321,8 +321,11 @@ public class Paddle : MonoBehaviour
         // drawing.
         var wasNozzle = nozzle + new Vector3(here - x, 0f, 0f);
 
-        JetTrail.Plume(wasNozzle, nozzle, back, height, Mathf.Abs(drive) * speed, strength,
-            JetTrail.Rocket, material);
+        // The paddle's height serves as both the bore and the reach: a rocket
+        // bolted to the back of a slab is as wide as the slab, and its flame was
+        // always counted in the same unit.
+        JetTrail.Plume(wasNozzle, nozzle, back, height, height, Mathf.Abs(drive) * speed,
+            strength, JetTrail.Rocket, material);
 
         emberDebt += JetTrail.EmberRate * strength * Time.deltaTime;
         while (emberDebt >= 1f)
