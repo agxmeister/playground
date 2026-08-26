@@ -31,6 +31,12 @@ public class GameManager : MonoBehaviour
     // editor setup script. An array rather than nine slots because the enum is
     // the index and nothing here should be able to disagree with it.
     [SerializeField] Material[] blockMaterials;
+    // How far one block of a material may drift from the next, for the materials
+    // that have any drift in them at all. Keyed by value rather than by index —
+    // a material with no entry wears its shared asset untouched, which is every
+    // material but Polymer for now.
+    [SerializeField] BlockVariety[] blockVarieties;
+
     [SerializeField] Paddle paddle;
     [SerializeField] ScoreBoard scoreBoard;
     [SerializeField] RecordsPanel recordsPanel;
@@ -76,6 +82,15 @@ public class GameManager : MonoBehaviour
     // How far below the frame's bottom edge a ball has to fall to be lost. Far
     // enough that it has plainly gone rather than clipped the boundary.
     const float BallLostDrop = 0.7f;
+
+    // How coarse a block's surface grain reads, as tiles of the grain texture
+    // per world unit. One number settles it for all four block shapes, whose
+    // meshes lay out UVs four different ways — Brick.grainUvPerUnit is what each
+    // of them divides it by. Two puts a tile across half a unit, so a full
+    // slab's face carries three of them side by side and one up its height,
+    // which at the grain textures' own resolution leaves the moulding finer than
+    // the screen can resolve rather than coarser.
+    const float GrainTilesPerUnit = 2f;
 
     State state;
     State endState;
@@ -304,6 +319,8 @@ public class GameManager : MonoBehaviour
         var brick = Instantiate(PrefabFor(kind), position, Quaternion.identity, brickHolder);
         brick.Points = points;
         brick.SetMaterial(material, MaterialAsset(material));
+        var variety = VarietyOf(material);
+        if (variety != null) brick.SetLook(variety.Roll(GrainTilesPerUnit));
         // A force field is never cleared, so a round that counted one would
         // wait for ever to be won.
         if (!brick.Unbreakable) bricksLeft++;
@@ -315,6 +332,19 @@ public class GameManager : MonoBehaviour
     {
         int index = (int)material;
         return blockMaterials != null && index < blockMaterials.Length ? blockMaterials[index] : null;
+    }
+
+    // Null for a material nothing was authored for, which is the ordinary case
+    // and not a failure: no variety means every block of it is the shared asset
+    // exactly as written, the way all nine were before Polymer got a grain.
+    BlockVariety VarietyOf(BlockMaterial material)
+    {
+        if (blockVarieties == null) return null;
+        foreach (var variety in blockVarieties)
+            if (variety != null && variety.material == material && variety.grains != null
+                && variety.grains.Length > 0)
+                return variety;
+        return null;
     }
 
     // Falls back to the normal brick while a variant prefab is not wired up.

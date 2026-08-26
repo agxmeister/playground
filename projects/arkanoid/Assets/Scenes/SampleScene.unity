@@ -2928,6 +2928,21 @@ MonoBehaviour:
   - {fileID: 2100000, guid: b9d8fd9233b6848ca93ccd3210e3e6ca, type: 2}
   - {fileID: 2100000, guid: 582284e9a7dc2498cac3549303cb7a7d, type: 2}
   - {fileID: 2100000, guid: 7448fa81cc1d3450d8fe0f94595278a1, type: 2}
+  blockVarieties:
+  - material: 1
+    grains:
+    - {fileID: 2800000, guid: 4cb32608ba7c8401994fafd9882a4fcb, type: 3}
+    - {fileID: 2800000, guid: d071169edece2496b9bfe99a5a89b5e7, type: 3}
+    - {fileID: 2800000, guid: 55089876349d844b98355190313c68f2, type: 3}
+    grainNormals:
+    - {fileID: 2800000, guid: d3d40584eb6094f1e9e5cd30fc7a765d, type: 3}
+    - {fileID: 2800000, guid: f682534f39f744e17abb0748d66c53c9, type: 3}
+    - {fileID: 2800000, guid: f1ea15f86e20c46658969f6756e78706, type: 3}
+    darkest: {r: 0.05, g: 0.05, b: 0.056, a: 1}
+    lightest: {r: 0.93, g: 0.928, b: 0.91, a: 1}
+    darkSmoothness: 0.45
+    lightSmoothness: 0.12
+    hueJitter: 0.03
   paddle: {fileID: 887666782}
   scoreBoard: {fileID: 685092864}
   recordsPanel: {fileID: 1310166190}
@@ -2936,8 +2951,6 @@ MonoBehaviour:
   playfieldObjects:
   - {fileID: 1053000845}
   - {fileID: 887666781}
-  rows: 5
-  columns: 8
   startingLives: 3
 --- !u!4 &731019585
 Transform:

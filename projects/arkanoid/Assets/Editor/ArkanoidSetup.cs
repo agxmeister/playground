@@ -7,9 +7,8 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Builds the Arkanoid assets and scene as a resumable state machine: each stage
-// (numbered to eighty-five, ending with the game over board a lost round comes
-// to rest on)
-// creates one batch of assets and returns, letting the next domain reload see
+// (numbered to ninety-seven, ending with the world-UV box meshes a block's
+// tiled grain needed) creates one batch of assets and returns, letting the next domain reload see
 // the result before the following stage runs. Safe to run on every reload —
 // once everything exists it is a no-op.
 public static class ArkanoidSetup
@@ -26,6 +25,73 @@ public static class ArkanoidSetup
     const string TexturesFolder = "Assets/Textures";
     const string BrickWallTexturePath = TexturesFolder + "/BrickWall.png";
     const string FogTexturePath = TexturesFolder + "/Fog.png";
+    // Polymer's surface grains. Three characters of injection-moulded plastic,
+    // each written twice: a near-white albedo carrying only a whisper of value,
+    // and a normal map carrying all the relief. Splitting them that way is what
+    // lets the same grain serve a near-white block and a near-black one — a
+    // dark block whose grain lived in its albedo would have nothing left to be
+    // dark with, and the texture would vanish exactly where the block most
+    // needs to not be mistaken for Neutronium.
+    static readonly (string Name, GrainKind Kind)[] PolymerGrains =
+    {
+        ("PolymerPebble", GrainKind.Pebble),
+        ("PolymerStipple", GrainKind.Stipple),
+        ("PolymerCrumb", GrainKind.Crumb),
+    };
+    static string GrainTexturePath(string name) => TexturesFolder + "/" + name + ".png";
+    static string GrainNormalPath(string name) => TexturesFolder + "/" + name + "Normal.png";
+    const int GrainTextureSize = 256;
+
+    // The band a Polymer block's batch colour is drawn from: the whole sheet,
+    // near-white through near-black, which is what the reference for the
+    // material actually looks like — moulded plastic comes in every value there
+    // is. It does mean Polymer's dark end and Neutronium's are the same
+    // brightness, so brightness alone stops being what tells the softest block
+    // from the hardest. What tells them apart instead is the surface: Polymer is
+    // a dielectric with a grain and a broad sheen, Neutronium is full metallic
+    // at smoothness 0.05 in a scene with no reflection probe and so returns
+    // nothing at all. That is a stronger cue at a glance than a value step was,
+    // but it is a cue in the *relief*, which is why the grain is not optional
+    // decoration here — it is the thing carrying the reading.
+    static readonly Color PolymerDarkest = new Color(0.050f, 0.050f, 0.056f, 1f);
+    static readonly Color PolymerLightest = new Color(0.930f, 0.928f, 0.910f, 1f);
+    // Dark plastic is glossy plastic — the black tiles in the reference all
+    // throw a highlight the white ones don't — so gloss rides along with the
+    // roll rather than being a second independent die.
+    const float PolymerDarkSmoothness = 0.45f;
+    const float PolymerLightSmoothness = 0.12f;
+    const float PolymerHueJitter = 0.03f;
+
+    // How many UV units each block shape lays across one world unit of its
+    // face — the divisor that makes one authored grain density come out the
+    // same size on all four shapes. See Brick.grainUvPerUnit: the stock cube
+    // and sphere map 0..1 across a face whatever its size, so their span is the
+    // reciprocal of that size, while the rounded prism's mesh puts local XY
+    // straight into the UV and so spans exactly one.
+    static readonly (string Prefab, Vector2 UvPerUnit)[] BrickGrainUvSpans =
+    {
+        // The two box blocks wear world-UV meshes of their own rather than the
+        // stock cube (stages 96 and 97), so like the rounded prism they measure
+        // one UV unit to one world unit on every face.
+        (BrickPrefabPath, Vector2.one),
+        (HalfBrickPrefabPath, Vector2.one),
+        (RoundedBrickPrefabPath, Vector2.one),
+        // A stock sphere's u runs once around the equator and its v once from
+        // pole to pole, so the two spans differ by the half-turn: pi*d across
+        // u and pi*d/2 across v.
+        (RoundBrickPrefabPath, new Vector2(
+            1f / (Mathf.PI * RoundBrickDiameter), 2f / (Mathf.PI * RoundBrickDiameter))),
+    };
+
+    // Which relief a grain is. The three characters picked off the reference
+    // sheet: the orange-peel that dominates it, the tight speckle of the pale
+    // tiles, and the coarse granulate of the dark ones.
+    enum GrainKind
+    {
+        Pebble,
+        Stipple,
+        Crumb,
+    }
     const string BallPanelTexturePath = TexturesFolder + "/BallPanels.png";
     const string MenuFogMaterialPath = MaterialsFolder + "/MenuFog.mat";
     const string WallSideMaterialPath = MaterialsFolder + "/WallSide.mat";
@@ -57,6 +123,14 @@ public static class ArkanoidSetup
     const string RoundedBrickPrefabPath = PrefabsFolder + "/RoundedBrick.prefab";
     const string RoundBrickPrefabPath = PrefabsFolder + "/RoundBrick.prefab";
     const string RoundedBrickMeshPath = MeshesFolder + "/BrickRounded.asset";
+    // World-UV box meshes for the two box-shaped blocks, replacing the stock
+    // cube now that they wear a tiled grain: the stock cube maps 0..1 across
+    // every face whatever it measures, which combs the grain into stripes on the
+    // thin sides. Unit-size geometry with the block's proportions baked into the
+    // UVs, so the prefabs keep the transform scale their crack overlay is
+    // measured in.
+    const string BrickBoxMeshPath = MeshesFolder + "/BrickBox.asset";
+    const string HalfBrickBoxMeshPath = MeshesFolder + "/HalfBrickBox.asset";
     const float BrickWidth = 1.5f;
     const float BrickHeight = 0.5f;
     const float BrickDepth = 0.6f;
@@ -1807,6 +1881,345 @@ public static class ArkanoidSetup
                 return;
             }
         }
+
+        // Stage 91: Polymer's three surface grains, six files — a near-white
+        // albedo and a normal map each. The guard is the first albedo's absence,
+        // so retuning a grain means deleting the PNGs and letting this write
+        // them again, keeping their `.meta` files the way stage 79's ball
+        // texture is retuned: a new guid would break the references stage 95
+        // hands the GameManager.
+        if (!File.Exists(ToAbsolute(GrainTexturePath(PolymerGrains[0].Name))))
+        {
+            Directory.CreateDirectory(ToAbsolute(TexturesFolder));
+            foreach (var grain in PolymerGrains) WriteGrainTextures(grain.Name, grain.Kind);
+            AssetDatabase.Refresh();
+            Debug.Log($"[ArkanoidSetup] Stage 91: wrote {PolymerGrains.Length} polymer grains, albedo and normal.");
+            return;
+        }
+
+        // Stage 92: import the normal maps *as* normal maps. A tangent-space
+        // map left on the default importer type is read as colour and lit as
+        // though the surface were painted lilac — which is exactly what it looks
+        // like, and it is the one failure here that shows up as a wrong hue
+        // rather than as flat geometry. The albedos need nothing: a PNG's
+        // default import is already sRGB, repeat-wrapped and mipmapped, and the
+        // mipmaps matter — a 256 px grain tiled twice a unit on a block a
+        // hundred-odd pixels tall would shimmer without them.
+        var strayNormal = FirstNonNormalMapGrain();
+        if (strayNormal != null)
+        {
+            foreach (var grain in PolymerGrains)
+            {
+                var importer = (TextureImporter)AssetImporter.GetAtPath(GrainNormalPath(grain.Name));
+                if (importer == null || importer.textureType == TextureImporterType.NormalMap) continue;
+                importer.textureType = TextureImporterType.NormalMap;
+                importer.SaveAndReimport();
+            }
+            Debug.Log("[ArkanoidSetup] Stage 92: imported the polymer grain normals as normal maps.");
+            return;
+        }
+
+        // Stage 93: give the shared BlockPolymer material the first grain, so a
+        // block that never gets a per-instance look (a level that leaves the
+        // varieties unwired, or anything spawning a brick outside BuildLevel)
+        // still comes out moulded rather than flat. It is also what turns the
+        // shader's normal-map path on: a keyword is a fact about the material and
+        // cannot be overridden per instance, so every per-block grain in the game
+        // is riding on this one call.
+        var polymerMaterial = AssetDatabase.LoadAssetAtPath<Material>(
+            BlockMaterialPath(BlockMaterial.Polymer));
+        var defaultGrain = AssetDatabase.LoadAssetAtPath<Texture2D>(
+            GrainTexturePath(PolymerGrains[0].Name));
+        var defaultGrainNormal = AssetDatabase.LoadAssetAtPath<Texture2D>(
+            GrainNormalPath(PolymerGrains[0].Name));
+        if (polymerMaterial != null && defaultGrain != null && defaultGrainNormal != null
+            && polymerMaterial.GetTexture("_BaseMap") != defaultGrain)
+        {
+            polymerMaterial.SetTexture("_BaseMap", defaultGrain);
+            polymerMaterial.SetTexture("_BumpMap", defaultGrainNormal);
+            polymerMaterial.EnableKeyword("_NORMALMAP");
+            // The full slab's own tiling, which is what this fallback would most
+            // likely be seen on. A per-instance look overrides both of these.
+            var slab = new Vector2(
+                PolymerGrainTiles * BrickWidth, PolymerGrainTiles * BrickHeight);
+            polymerMaterial.SetTextureScale("_BaseMap", slab);
+            polymerMaterial.SetTextureScale("_BumpMap", slab);
+            EditorUtility.SetDirty(polymerMaterial);
+            AssetDatabase.SaveAssets();
+            Debug.Log("[ArkanoidSetup] Stage 93: put a grain and its normal on BlockPolymer.");
+            return;
+        }
+
+        // Stage 94: tell each block prefab how its own mesh lays UVs out, which
+        // is the one thing standing between one authored grain size and four
+        // different ones. Nothing here touches the scene — the four prefabs are
+        // assets and the grid is spawned from them — so no save is paired with
+        // it.
+        var strayUvSpan = FirstStaleGrainUvSpan();
+        if (strayUvSpan != null)
+        {
+            foreach (var (path, uvPerUnit) in BrickGrainUvSpans)
+            {
+                if (!GrainUvSpanDiffers(path, uvPerUnit)) continue;
+                var root = PrefabUtility.LoadPrefabContents(path);
+                var brickSo = new SerializedObject(root.GetComponent<Brick>());
+                brickSo.FindProperty("grainUvPerUnit").vector2Value = uvPerUnit;
+                brickSo.ApplyModifiedPropertiesWithoutUndo();
+                PrefabUtility.SaveAsPrefabAsset(root, path);
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+            Debug.Log("[ArkanoidSetup] Stage 94: set the block prefabs' grain UV spans.");
+            return;
+        }
+
+        // Stage 95: hand Polymer's variety to the GameManager. A standing repair
+        // for the same reason stage 87 is: stage 91 rewrites texture assets, and
+        // rewriting one over a path already referenced destroys the object the
+        // scene was pointing at rather than updating it, so these slots go null
+        // instead of following the new PNG into the same file. The guard reads
+        // the entry's *contents* — both texture arrays, element by element —
+        // because a list that is the right length with a null grain in it is
+        // exactly what that failure leaves behind, and VarietyOf would then
+        // quietly hand every Polymer block the shared asset with no sign that
+        // anything had been lost.
+        //
+        // An in-memory fact, so like stages 70, 76, 85 and 87 this saves on its
+        // own tick rather than through a paired stage: there is no disk-side
+        // signature to gate on, since a texture guid in the scene file says
+        // nothing about which slot is holding it.
+        var varietyManager = FindRootObject("GameManager");
+        var varietyManagerComponent = varietyManager != null
+            ? varietyManager.GetComponent<GameManager>() : null;
+        var grainTextures = LoadGrains(GrainTexturePath);
+        var grainNormalTextures = LoadGrains(GrainNormalPath);
+        if (varietyManagerComponent != null && grainTextures != null && grainNormalTextures != null)
+        {
+            var varietySo = new SerializedObject(varietyManagerComponent);
+            var varieties = varietySo.FindProperty("blockVarieties");
+            if (PolymerVarietyDiffers(varieties, grainTextures, grainNormalTextures))
+            {
+                varieties.arraySize = 1;
+                var entry = varieties.GetArrayElementAtIndex(0);
+                entry.FindPropertyRelative("material").enumValueIndex = (int)BlockMaterial.Polymer;
+                FillTextureArray(entry.FindPropertyRelative("grains"), grainTextures);
+                FillTextureArray(entry.FindPropertyRelative("grainNormals"), grainNormalTextures);
+                entry.FindPropertyRelative("darkest").colorValue = PolymerDarkest;
+                entry.FindPropertyRelative("lightest").colorValue = PolymerLightest;
+                entry.FindPropertyRelative("darkSmoothness").floatValue = PolymerDarkSmoothness;
+                entry.FindPropertyRelative("lightSmoothness").floatValue = PolymerLightSmoothness;
+                entry.FindPropertyRelative("hueJitter").floatValue = PolymerHueJitter;
+                varietySo.ApplyModifiedPropertiesWithoutUndo();
+                EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+                EditorApplication.update += SaveSceneOnce;
+                Debug.Log("[ArkanoidSetup] Stage 95: wired Polymer's variety and queued a scene save.");
+                return;
+            }
+        }
+
+        // Stage 96: world-UV box meshes for the two box blocks. Adding a tiled
+        // grain is what made the stock cube untenable: it lays UVs 0..1 across
+        // every face whatever that face measures, so the one tiling that suits a
+        // 1.5-wide front is two and a half times too dense across a 0.6-deep
+        // side, and the grain there came out visibly combed into stripes. No
+        // tiling value can fix it — the whole point of these meshes is that a UV
+        // unit is a world unit on all six faces, which is the same thing the
+        // rounded prism already does and why that block never had the problem.
+        //
+        // The guard measures the winding off the mesh's own triangles rather
+        // than trusting a file to be absent, for the reason stage 89's measures
+        // the corner radius: the path is the one it has always been written to,
+        // and the first cut of this builder wound every face the wrong way round
+        // — which draws the far face and the inside of the box, and reads as a
+        // stepped, hollow, corrupt block. A guard that only asked whether the
+        // file existed could never have repaired that.
+        if (!File.Exists(ToAbsolute(BrickBoxMeshPath)) || BlockBoxWindingIsInverted())
+        {
+            Directory.CreateDirectory(ToAbsolute(MeshesFolder));
+            AssetDatabase.CreateAsset(
+                BuildWorldUvBoxMesh("BrickBox", new Vector3(BrickWidth, BrickHeight, BrickDepth)),
+                BrickBoxMeshPath);
+            AssetDatabase.CreateAsset(
+                BuildWorldUvBoxMesh("HalfBrickBox", new Vector3(HalfBrickWidth, BrickHeight, BrickDepth)),
+                HalfBrickBoxMeshPath);
+            AssetDatabase.SaveAssets();
+            Debug.Log("[ArkanoidSetup] Stage 96: wrote the world-UV block box meshes.");
+            return;
+        }
+
+        // Stage 97: put them on the prefabs. The transform scale is left exactly
+        // as it was — the geometry is a unit cube, so the scale still supplies
+        // the size, and the crack overlay child that is measured in that scale
+        // does not move. Nothing here touches the scene, so no save is paired
+        // with it.
+        var boxSwap = FirstStaleBlockBoxMesh();
+        if (boxSwap != null)
+        {
+            foreach (var (path, meshPath) in BlockBoxMeshes)
+            {
+                var wanted = AssetDatabase.LoadAssetAtPath<Mesh>(meshPath);
+                if (wanted == null || !BlockBoxMeshDiffers(path, meshPath)) continue;
+                var root = PrefabUtility.LoadPrefabContents(path);
+                root.GetComponent<MeshFilter>().sharedMesh = wanted;
+                PrefabUtility.SaveAsPrefabAsset(root, path);
+                PrefabUtility.UnloadPrefabContents(root);
+                // And then make the Editor read the prefab back off disk. This
+                // is the whole reason the first cut of this stage did nothing
+                // visible: SaveAsPrefabAsset writes the file — the guid lands
+                // correctly, and `git diff` looks like a clean repair — but the
+                // Editor goes on serving the *imported* prefab it already had,
+                // which was imported in the window where stage 96 had just
+                // destroyed the mesh and so holds a null. Instantiate hands out
+                // that imported copy, so every block in the round came up with
+                // no mesh at all while the file on disk was perfect. Nothing
+                // short of a forced reimport clears it: a plain Refresh, a
+                // domain reload and re-opening the scene all leave it standing.
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            }
+            Debug.Log("[ArkanoidSetup] Stage 97: put the world-UV box meshes on the block prefabs.");
+            return;
+        }
+
+    }
+
+    // Each box block against the world-UV mesh it should be drawing. The same
+    // shape of table MenuMeshes is, and for the same reason: stage 96 writes
+    // these assets, and a rewrite over a path the prefab already references
+    // destroys the object rather than updating it, so this is the standing
+    // repair as well as the first wiring.
+    static readonly (string Prefab, string Mesh)[] BlockBoxMeshes =
+    {
+        (BrickPrefabPath, BrickBoxMeshPath),
+        (HalfBrickPrefabPath, HalfBrickBoxMeshPath),
+    };
+
+    // Whether the block box mesh on disk is inside out: every triangle of a
+    // closed convex box should face away from its middle, so one that faces
+    // back towards it is a face wound the wrong way round. Measured off the
+    // first triangle, since the builder winds all twelve the same way — either
+    // the whole box is right or the whole box is inverted.
+    static bool BlockBoxWindingIsInverted()
+    {
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(BrickBoxMeshPath);
+        if (mesh == null) return false;
+
+        var vertices = mesh.vertices;
+        var triangles = mesh.triangles;
+        if (triangles.Length < 3) return false;
+
+        var a = vertices[triangles[0]];
+        var b = vertices[triangles[1]];
+        var c = vertices[triangles[2]];
+        var face = Vector3.Cross(b - a, c - a);
+        // The box is centred on the origin, so a corner's own position is the
+        // direction "outward" at that corner.
+        return Vector3.Dot(face, a) < 0f;
+    }
+
+    static string FirstStaleBlockBoxMesh()
+    {
+        foreach (var (path, meshPath) in BlockBoxMeshes)
+        {
+            var wanted = AssetDatabase.LoadAssetAtPath<Mesh>(meshPath);
+            if (wanted != null && BlockBoxMeshDiffers(path, meshPath)) return path;
+        }
+        return null;
+    }
+
+    // Compared by the asset the mesh *is*, not by object identity. Identity is
+    // the wrong question here and asking it span this stage for ever: the mesh a
+    // prefab resolves to is not guaranteed to be the same instance
+    // LoadAssetAtPath hands back, so `sharedMesh != wanted` can be true of a
+    // prefab that is already pointing at exactly the right asset — and then the
+    // repair runs, and runs again on the next reload, and never settles. A path
+    // is the durable fact, and it is also the one that answers the question the
+    // stage actually has: is this prefab drawing the mesh at that path?
+    static bool BlockBoxMeshDiffers(string prefabPath, string meshPath)
+    {
+        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        var filter = prefab != null ? prefab.GetComponent<MeshFilter>() : null;
+        if (filter == null) return false;
+        if (filter.sharedMesh == null) return true;
+        return AssetDatabase.GetAssetPath(filter.sharedMesh) != meshPath;
+    }
+
+    // The grain density the shared Polymer material's fallback tiling is worked
+    // out at. The same number GameManager.GrainTilesPerUnit holds for the
+    // per-instance looks, written here because an editor script cannot read a
+    // private const out of a runtime one — if either moves, both move.
+    const float PolymerGrainTiles = 2f;
+
+    // The first grain normal still sitting on the default importer type, or null
+    // once every one of them has been imported as a normal map.
+    static string FirstNonNormalMapGrain()
+    {
+        foreach (var grain in PolymerGrains)
+        {
+            var importer = (TextureImporter)AssetImporter.GetAtPath(GrainNormalPath(grain.Name));
+            if (importer != null && importer.textureType != TextureImporterType.NormalMap)
+                return grain.Name;
+        }
+        return null;
+    }
+
+    // The first block prefab whose authored UV span is not what its own mesh
+    // actually does, or null once all four agree.
+    static string FirstStaleGrainUvSpan()
+    {
+        foreach (var (path, uvPerUnit) in BrickGrainUvSpans)
+            if (GrainUvSpanDiffers(path, uvPerUnit)) return path;
+        return null;
+    }
+
+    static bool GrainUvSpanDiffers(string prefabPath, Vector2 uvPerUnit)
+    {
+        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        var brick = prefab != null ? prefab.GetComponent<Brick>() : null;
+        if (brick == null) return false;
+        var authored = new SerializedObject(brick).FindProperty("grainUvPerUnit").vector2Value;
+        return (authored - uvPerUnit).sqrMagnitude > 0.0000001f;
+    }
+
+    // Every polymer grain map of one kind, in PolymerGrains' own order. Null if
+    // any one of them is not readable back yet, so the stage that wants them
+    // waits for a reload rather than wiring a hole.
+    static Texture2D[] LoadGrains(System.Func<string, string> pathOf)
+    {
+        var textures = new Texture2D[PolymerGrains.Length];
+        for (int i = 0; i < textures.Length; i++)
+        {
+            textures[i] = AssetDatabase.LoadAssetAtPath<Texture2D>(pathOf(PolymerGrains[i].Name));
+            if (textures[i] == null) return null;
+        }
+        return textures;
+    }
+
+    // Whether the wired variety is anything other than exactly this one entry
+    // holding exactly these textures — a wrong length anywhere, the wrong
+    // material, or any slot holding the wrong asset or nothing at all.
+    static bool PolymerVarietyDiffers(SerializedProperty varieties,
+        Texture2D[] grains, Texture2D[] normals)
+    {
+        if (varieties.arraySize != 1) return true;
+        var entry = varieties.GetArrayElementAtIndex(0);
+        if (entry.FindPropertyRelative("material").enumValueIndex != (int)BlockMaterial.Polymer)
+            return true;
+        return TextureArrayDiffers(entry.FindPropertyRelative("grains"), grains)
+            || TextureArrayDiffers(entry.FindPropertyRelative("grainNormals"), normals);
+    }
+
+    static bool TextureArrayDiffers(SerializedProperty slot, Texture2D[] textures)
+    {
+        if (slot.arraySize != textures.Length) return true;
+        for (int i = 0; i < textures.Length; i++)
+            if (slot.GetArrayElementAtIndex(i).objectReferenceValue != textures[i]) return true;
+        return false;
+    }
+
+    static void FillTextureArray(SerializedProperty slot, Texture2D[] textures)
+    {
+        slot.arraySize = textures.Length;
+        for (int i = 0; i < textures.Length; i++)
+            slot.GetArrayElementAtIndex(i).objectReferenceValue = textures[i];
     }
 
     // Every menu mesh stage 40 writes over, against the object that draws it.
@@ -2469,6 +2882,141 @@ public static class ArkanoidSetup
         Object.DestroyImmediate(texture);
     }
 
+    // One grain, written as the two maps a block wears: a near-white albedo and
+    // a normal map. Both come off the same height field, so the faint mottling
+    // and the relief agree about where the bumps are.
+    //
+    // The height field is scattered discs with a smooth falloff, combined by
+    // *max* rather than by sum — a sum of overlapping discs is a lumpy plateau
+    // that normalises down to mush, where a max is a field of distinct rounded
+    // caps, which is what moulded plastic is. Every disc is drawn wrapped, so
+    // the tile is seamless in both directions and a random offset into it is as
+    // good as any other (see BlockVariety.Roll).
+    static void WriteGrainTextures(string name, GrainKind kind)
+    {
+        int size = GrainTextureSize;
+        // Seeded off the name, so the three grains differ and any one of them
+        // regenerates identically. Nothing downstream depends on the exact
+        // pattern, but a texture that changed every reload would make every
+        // screenshot comparison worthless.
+        var random = new System.Random(name.GetHashCode());
+        var height = new float[size * size];
+        float normalStrength;
+
+        switch (kind)
+        {
+            // Orange peel: one dense layer of medium caps, heavily overlapping,
+            // which is the dominant look on the reference sheet.
+            case GrainKind.Pebble:
+                ScatterCaps(height, size, random, 220, 10f, 18f);
+                normalStrength = 9f;
+                break;
+            // The tight even speckle of the pale tiles. Far more, far smaller:
+            // at block size this reads as a softened sheen rather than as
+            // countable bumps, which is the point of it.
+            case GrainKind.Stipple:
+                ScatterCaps(height, size, random, 1400, 3f, 6f);
+                normalStrength = 4f;
+                break;
+            // Coarse granulate: big caps for the chunk, then a fine layer over
+            // the top so the chunks themselves are not smooth.
+            default:
+                ScatterCaps(height, size, random, 90, 18f, 34f);
+                ScatterCaps(height, size, random, 260, 5f, 10f);
+                normalStrength = 13f;
+                break;
+        }
+
+        WriteGrainAlbedo(GrainTexturePath(name), height, size);
+        WriteGrainNormal(GrainNormalPath(name), height, size, normalStrength);
+    }
+
+    // Rounded caps laid down wrapped, combined by max. The falloff is
+    // smoothstep on the radius, so a cap meets the flat around it without a
+    // crease — a linear cone would put a hard rim in the normal map and read as
+    // a field of spikes.
+    static void ScatterCaps(float[] height, int size, System.Random random, int count,
+        float minRadius, float maxRadius)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            float cx = (float)random.NextDouble() * size;
+            float cy = (float)random.NextDouble() * size;
+            float radius = minRadius + (float)random.NextDouble() * (maxRadius - minRadius);
+            // A cap's own height varies too, so the field is not one uniform
+            // pebble repeated — the reference's grain is plainly uneven.
+            float peak = 0.65f + 0.35f * (float)random.NextDouble();
+            int reach = Mathf.CeilToInt(radius);
+
+            for (int dy = -reach; dy <= reach; dy++)
+            {
+                for (int dx = -reach; dx <= reach; dx++)
+                {
+                    float distance = Mathf.Sqrt(dx * dx + dy * dy);
+                    if (distance > radius) continue;
+                    // Wrapped, so the tile has no edge to seam at.
+                    int x = (((int)cx + dx) % size + size) % size;
+                    int y = (((int)cy + dy) % size + size) % size;
+                    float value = peak * Mathf.SmoothStep(0f, 1f, 1f - distance / radius);
+                    int index = y * size + x;
+                    if (value > height[index]) height[index] = value;
+                }
+            }
+        }
+    }
+
+    // Near white throughout: the grain's job in the albedo is only to keep the
+    // surface from being one flat value, since the block's actual colour is the
+    // per-instance tint multiplying this. Grayscale, like BrickWall.png, for the
+    // same reason.
+    static void WriteGrainAlbedo(string path, float[] height, int size)
+    {
+        const float contrast = 0.10f;
+        var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float value = 1f - contrast * (1f - height[y * size + x]);
+                texture.SetPixel(x, y, new Color(value, value, value, 1f));
+            }
+        }
+        texture.Apply();
+        Directory.CreateDirectory(ToAbsolute(TexturesFolder));
+        File.WriteAllBytes(ToAbsolute(path), texture.EncodeToPNG());
+        Object.DestroyImmediate(texture);
+    }
+
+    // Tangent-space normals from the height field by central differences, taken
+    // wrapped so the map tiles as seamlessly as the height did. `strength`
+    // scales the gradient into the tilt a bump of that size should have: a cap
+    // of radius r rises over r texels, so the slope is about 1/r and the
+    // strength wanted is about r — which is why each grain carries its own.
+    static void WriteGrainNormal(string path, float[] height, int size, float strength)
+    {
+        var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float left = height[y * size + (x - 1 + size) % size];
+                float right = height[y * size + (x + 1) % size];
+                float down = height[((y - 1 + size) % size) * size + x];
+                float up = height[((y + 1) % size) * size + x];
+                var normal = new Vector3(
+                    -(right - left) * 0.5f * strength,
+                    -(up - down) * 0.5f * strength,
+                    1f).normalized;
+                texture.SetPixel(x, y, new Color(
+                    normal.x * 0.5f + 0.5f, normal.y * 0.5f + 0.5f, normal.z * 0.5f + 0.5f, 1f));
+            }
+        }
+        texture.Apply();
+        Directory.CreateDirectory(ToAbsolute(TexturesFolder));
+        File.WriteAllBytes(ToAbsolute(path), texture.EncodeToPNG());
+        Object.DestroyImmediate(texture);
+    }
+
     // Four panels around the ball, so that a ball turning about the axis it
     // faces the camera down reads as turning rather than as sitting still.
     // Longitude is the texture's u on a stock sphere, so bands of u are wedges
@@ -2623,6 +3171,80 @@ public static class ArkanoidSetup
         Face(new Vector3(-hw, -hh, hd), new Vector3(hw, -hh, hd), new Vector3(hw, -hh, -hd), new Vector3(-hw, -hh, -hd), width, depth);   // bottom (-Y)
         Face(new Vector3(hw, -hh, -hd), new Vector3(hw, -hh, hd), new Vector3(hw, hh, hd), new Vector3(hw, hh, -hd), depth, height);      // right (+X)
         Face(new Vector3(-hw, -hh, hd), new Vector3(-hw, -hh, -hd), new Vector3(-hw, hh, -hd), new Vector3(-hw, hh, hd), depth, height);  // left (-X)
+
+        mesh.SetVertices(vertices);
+        mesh.SetUVs(0, uvs);
+        mesh.SetTriangles(triangles, 0);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    // A box the size of a unit cube whose UVs are laid out in the *world* units
+    // its faces will end up covering once the prefab's own scale is applied.
+    // Geometry at unit size rather than at final size, deliberately: the block
+    // prefabs carry their proportions in their transform scale and their crack
+    // overlay is a child measured in that scale, so authoring the mesh at final
+    // size and taking the scale to one would blow the crack up by the same
+    // factor it shrank the box. The size is therefore baked into the UVs alone.
+    //
+    // This replaces the stock cube for the two box-shaped blocks, and it is the
+    // only real fix for what the stock cube does to a tiled texture: it maps 0..1
+    // across every face whatever that face measures, so one tiling that is right
+    // for a 1.5-wide front is 2.5x too dense across a 0.6-deep side, and the
+    // grain comes out combed into stripes there. No tiling value can fix that,
+    // because the fault is that one number is being asked to serve faces of two
+    // different sizes.
+    static Mesh BuildWorldUvBoxMesh(string name, Vector3 size)
+    {
+        var mesh = new Mesh { name = name };
+        var vertices = new List<Vector3>();
+        var uvs = new List<Vector2>();
+        var triangles = new List<int>();
+
+        // The six outward normals, each paired with one in-plane axis; the other
+        // is `Cross(normal, u)`, which is what keeps all six windings right
+        // without six hand-checked sign conventions. That cross makes
+        // `u x v == normal`, so with the corner order below every face comes out
+        // clockwise as seen from outside it, which is Unity's front face.
+        var faces = new[]
+        {
+            (Normal: Vector3.back, U: Vector3.right),
+            (Normal: Vector3.forward, U: Vector3.left),
+            (Normal: Vector3.right, U: Vector3.forward),
+            (Normal: Vector3.left, U: Vector3.back),
+            (Normal: Vector3.up, U: Vector3.right),
+            (Normal: Vector3.down, U: Vector3.right),
+        };
+
+        foreach (var (normal, u) in faces)
+        {
+            var v = Vector3.Cross(normal, u);
+            int start = vertices.Count;
+            // How far the face reaches along each of its own axes once the
+            // prefab's scale is on: the UV, and nothing else, is measured in it.
+            float uExtent = Vector3.Scale(u, size).magnitude;
+            float vExtent = Vector3.Scale(v, size).magnitude;
+
+            for (int corner = 0; corner < 4; corner++)
+            {
+                float du = corner == 1 || corner == 2 ? 0.5f : -0.5f;
+                float dv = corner >= 2 ? 0.5f : -0.5f;
+                vertices.Add(normal * 0.5f + u * du + v * dv);
+                uvs.Add(new Vector2(du * uExtent, dv * vExtent));
+            }
+
+            // The corner walk above already goes clockwise seen from outside the
+            // face — `v` is `Cross(normal, u)`, so `u x v == normal` — and
+            // clockwise-from-outside is Unity's front face. So the two triangles
+            // are taken in that order and not reversed. Reversing them was the
+            // first version of this and it turned every block inside out: with
+            // back-face culling the near face is the one thrown away, so what is
+            // drawn is the far face and the inside of the box, which reads as a
+            // stepped, hollow, plainly corrupt shape rather than as a brick.
+            triangles.Add(start); triangles.Add(start + 1); triangles.Add(start + 2);
+            triangles.Add(start); triangles.Add(start + 2); triangles.Add(start + 3);
+        }
 
         mesh.SetVertices(vertices);
         mesh.SetUVs(0, uvs);

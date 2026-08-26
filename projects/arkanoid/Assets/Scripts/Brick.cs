@@ -10,6 +10,18 @@ public class Brick : MonoBehaviour
     // every slot they fill.
     [SerializeField] int baseHardness = 2;
 
+    // How many UV units this shape's face spans per world unit of it — a fact
+    // about the mesh's own texture coordinates, authored per prefab, and the
+    // only thing standing between one grain size and four different ones. The
+    // stock cube and the stock sphere lay UVs 0..1 across a face whatever size
+    // that face is, so their span is the reciprocal of their world size; the
+    // rounded prism's mesh is authored at final size and puts local XY straight
+    // into the UV, so its span is exactly 1. Divide the wanted grain density by
+    // this and the tiling comes out in world terms on all four shapes — which
+    // is what the cube-UV trap costs if it is skipped: the same texture reading
+    // as pebbles on the slab and as stripes on the half-block.
+    [SerializeField] Vector2 grainUvPerUnit = Vector2.one;
+
     [SerializeField] SpriteRenderer crackRenderer;
     [SerializeField] Sprite[] lightCrackSprites;
     [SerializeField] Sprite[] heavyCrackSprites;
@@ -51,6 +63,43 @@ public class Brick : MonoBehaviour
         Material = kind;
         traits = BlockMaterials.Of(kind);
         if (asset != null) GetComponent<MeshRenderer>().sharedMaterial = asset;
+    }
+
+    // The casting, on top of the substance. The shared asset still says what
+    // this block is made of; this says which pressing of it this particular
+    // block came out of, and it goes on as a MaterialPropertyBlock rather than
+    // as an edited material — a per-instance override costs no asset and leaves
+    // the shared material exactly as authored, where `new Material(asset)` per
+    // block would hand every brick a copy to leak.
+    //
+    // The comment on SetMaterial above is now only half true: blocks of one
+    // material no longer batch together, because a property block opts the
+    // renderer out of the SRP batcher. That was worth paying — the board holds
+    // three dozen blocks and this is not where the frames go — and it is worth
+    // knowing before a level holds three hundred.
+    public void SetLook(BlockLook look)
+    {
+        if (!look.HasGrain) return;
+
+        var tiling = new Vector2(
+            look.GrainTilesPerUnit / Mathf.Max(grainUvPerUnit.x, 0.0001f),
+            look.GrainTilesPerUnit / Mathf.Max(grainUvPerUnit.y, 0.0001f));
+
+        var properties = new MaterialPropertyBlock();
+        // sRGB in, linear to the shader, for the same reason every other authored
+        // colour in this project makes the trip.
+        properties.SetColor("_BaseColor", look.Tint.linear);
+        properties.SetFloat("_Smoothness", look.Smoothness);
+        properties.SetTexture("_BaseMap", look.Grain);
+        properties.SetVector("_BaseMap_ST",
+            new Vector4(tiling.x, tiling.y, look.GrainOffset.x, look.GrainOffset.y));
+        if (look.GrainNormal != null)
+        {
+            properties.SetTexture("_BumpMap", look.GrainNormal);
+            properties.SetVector("_BumpMap_ST",
+                new Vector4(tiling.x, tiling.y, look.GrainOffset.x, look.GrainOffset.y));
+        }
+        GetComponent<MeshRenderer>().SetPropertyBlock(properties);
     }
 
     // The hit, and whether it was the last one the block could take. The *ball*

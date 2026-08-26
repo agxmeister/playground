@@ -43,7 +43,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 942436339393853534}
-  m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+  m_Mesh: {fileID: 4300000, guid: 6c0634384d51248b1b9a5768f4860368, type: 2}
 --- !u!23 &1342031395133894298
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -152,6 +152,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Brick
   baseHardness: 1
+  grainUvPerUnit: {x: 1, y: 1}
   crackRenderer: {fileID: 5042663409300813454}
   lightCrackSprites:
   - {fileID: 21300000, guid: 8df5bad99ce074a32953a9c8e30ac4e7, type: 3}
