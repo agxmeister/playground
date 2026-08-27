@@ -69,7 +69,7 @@ public class GameManager : MonoBehaviour
         BrickKind.Normal, BrickKind.Rounded, BrickKind.Half, BrickKind.Round,
     };
 
-    enum State { Menu, Ready, Playing, EnteringName, GameOver, Won }
+    enum State { Menu, Ready, Playing, EnteringName, GameOver, Won, Bench }
 
     const int MaxNameLength = 12;
 
@@ -83,6 +83,19 @@ public class GameManager : MonoBehaviour
     // enough that it has plainly gone rather than clipped the boundary.
     const float BallLostDrop = 0.7f;
 
+    // The room the test bench stands in, off to the right of the playfield the
+    // way the menu is off to its left, and switched off entirely while it is not
+    // in use. Serialized rather than found, because it is authored inactive and
+    // GameObject.Find cannot see it.
+    [SerializeField] TestBench testBench;
+
+    // Typed on the menu to open the bench. Letters are free there — the arrows,
+    // SPACE and DOWN drive the paddle, ESC has nothing to leave, and name entry
+    // is a state of its own — so a word can be a door without taking a key away
+    // from anything. See "The test bench" in CLAUDE.md.
+    static readonly Key[] BenchCode = { Key.B, Key.E, Key.N, Key.C, Key.H };
+    int benchProgress;
+
     // How coarse a block's surface grain reads, as tiles of the grain texture
     // per world unit. One number settles it for all four block shapes, whose
     // meshes lay out UVs four different ways — Brick.grainUvPerUnit is what each
@@ -90,7 +103,10 @@ public class GameManager : MonoBehaviour
     // slab's face carries three of them side by side and one up its height,
     // which at the grain textures' own resolution leaves the moulding finer than
     // the screen can resolve rather than coarser.
-    const float GrainTilesPerUnit = 2f;
+    // Public because the test bench shows the same blocks a round does and has
+    // to roll them the same way; a bench that moulded its grain at a different
+    // size would be answering a question nobody asked.
+    public const float GrainTilesPerUnit = 2f;
 
     State state;
     State endState;
@@ -160,6 +176,9 @@ public class GameManager : MonoBehaviour
         // The score and lives readouts belong to a round in progress.
         if (scoreBoard != null) scoreBoard.SetVisible(false);
         SetPlayfieldActive(false);
+        // Whatever brought us to the menu, the bench is not standing behind it:
+        // this is the one place every path back to the menu passes through.
+        if (testBench != null) testBench.gameObject.SetActive(false);
         if (recordsPanel != null) recordsPanel.Hide();
         // The menu is a room of its own, off to the left of the playfield, so
         // the view has to be over it before it is switched on. Coming back is a
@@ -326,9 +345,11 @@ public class GameManager : MonoBehaviour
         if (!brick.Unbreakable) bricksLeft++;
     }
 
+    // Public so the test bench dresses a block exactly as a round does, rather
+    // than carrying a second copy of the same wiring that could drift from it.
     // Falls back to null — and so to whatever the prefab was wearing — while a
     // material asset is not wired up, the same way PrefabFor does for shapes.
-    Material MaterialAsset(BlockMaterial material)
+    public Material MaterialAsset(BlockMaterial material)
     {
         int index = (int)material;
         return blockMaterials != null && index < blockMaterials.Length ? blockMaterials[index] : null;
@@ -337,7 +358,7 @@ public class GameManager : MonoBehaviour
     // Null for a material nothing was authored for, which is the ordinary case
     // and not a failure: no variety means every block of it is the shared asset
     // exactly as written, the way all nine were before Polymer got a grain.
-    BlockVariety VarietyOf(BlockMaterial material)
+    public BlockVariety VarietyOf(BlockMaterial material)
     {
         if (blockVarieties == null) return null;
         foreach (var variety in blockVarieties)
@@ -407,7 +428,14 @@ public class GameManager : MonoBehaviour
             case State.Menu:
                 // The menu drives itself entirely, hall of fame included —
                 // there is no keyboard path into it but SPACE to launch, which
-                // MainMenuPanel reads for itself.
+                // MainMenuPanel reads for itself. The one exception is the word
+                // that opens the test bench.
+                ReadBenchCode(keyboard);
+                break;
+            case State.Bench:
+                // Everything else the bench does, it reads for itself. Only the
+                // way out is here, since leaving is this component's business.
+                if (pressedEscape) CloseBench();
                 break;
             case State.Ready:
                 if (pressedSpace)
@@ -432,6 +460,52 @@ public class GameManager : MonoBehaviour
                 if (pressedSpace || pressedEscape) ShowMenu();
                 break;
         }
+    }
+
+    // The code has to be typed *in order*, and a wrong letter starts it over
+    // rather than merely failing — except that the wrong letter may itself be
+    // the first letter of a fresh attempt, which is why the reset re-tests
+    // against position zero. Nothing here is timed: a door nobody is racing
+    // through does not need to be.
+    void ReadBenchCode(Keyboard keyboard)
+    {
+        if (keyboard == null || testBench == null) return;
+
+        for (int i = 0; i < BenchCode.Length; i++)
+        {
+            if (!keyboard[BenchCode[i]].wasPressedThisFrame) continue;
+            benchProgress = i == benchProgress ? benchProgress + 1 : (i == 0 ? 1 : 0);
+            if (benchProgress < BenchCode.Length) return;
+            benchProgress = 0;
+            OpenBench();
+            return;
+        }
+        // A letter that is nowhere in the word is as much a mistake as one out
+        // of order.
+        if (keyboard.anyKey.wasPressedThisFrame) benchProgress = 0;
+    }
+
+    // The bench is a room, not an overlay: the menu is switched off and the view
+    // cuts to it, exactly the way coming back from a round cuts to the menu. The
+    // round's room stays off — nothing about a bench is a round.
+    void OpenBench()
+    {
+        transitionFrame = Time.frameCount;
+        ClearRound();
+        if (mainMenuPanel != null) mainMenuPanel.Hide();
+        if (scoreBoard != null) scoreBoard.SetVisible(false);
+        SetPlayfieldActive(false);
+        state = State.Bench;
+        testBench.gameObject.SetActive(true);
+        MoveViewTo(testBench.transform.position.x);
+    }
+
+    // Public so the bench's own Q key can leave: see TestBench for why ESC
+    // alone is not enough.
+    public void CloseBench()
+    {
+        testBench.gameObject.SetActive(false);
+        ShowMenu();
     }
 
     // The prompt freezes the game rather than overlaying a live one: a ball in
@@ -487,6 +561,13 @@ public class GameManager : MonoBehaviour
 
     public void OnBrickDestroyed(Brick brick)
     {
+        // A block on the test bench is not part of a round. It pays nothing and
+        // is counted in nothing — and this line is the one that matters, because
+        // SetScore writes straight through to the stored high score: without it,
+        // breaking a block on a bench would raise the bar a real round has to
+        // clear, and could put a bench session in the hall of fame.
+        if (state == State.Bench) return;
+
         SetScore(score + brick.Points);
         bricksLeft--;
         if (bricksLeft > 0 || state != State.Playing) return;

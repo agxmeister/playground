@@ -194,6 +194,21 @@ public static class ArkanoidSetup
     // same rate whichever screen it is on.
     const float CameraZ = -13.5f;
     const float PlayfieldPlaneZ = 0f;
+    // The test bench's room, off to the *right* of the playfield — the mirror of
+    // where the menu stands. Far enough that its borders and whatever is
+    // standing on it are out of reach of the other rooms' 2D physics, which
+    // ignores Z and so is only ever separated in X.
+    //
+    // **Two** screen widths rather than one, and that is not an aesthetic
+    // choice. At one width the room stands at x 20, which serialises as
+    // `m_LocalPosition: {x: 20, y: 0, z: 0}` — the exact string stage 53 greps
+    // the scene file for to decide whether the hall of fame is still at its old
+    // place. A room there made that gate true for ever and queued a scene save
+    // on every single reload. The lesson is stage 53's rather than this room's
+    // (a gate on residual damage is only as good as the scene's not containing
+    // that pattern legitimately), but the cheap fix is to stand somewhere
+    // nothing is looking: no gate in this file keys on x 40.
+    const float BenchRoomX = 2f * MainMenuPanel.ScreenSpacing;
     const float MenuPlayScale = (MenuPlaneZ - CameraZ) / (PlayfieldPlaneZ - CameraZ);
     // The labelled slabs the arrows replaced.
     const string LegacyMenuOptionStartMeshPath = MeshesFolder + "/MenuOptionStart.asset";
@@ -1255,19 +1270,31 @@ public static class ArkanoidSetup
         {
             builtHall.localPosition = new Vector3(-MainMenuPanel.ScreenSpacing, 0f, 0f);
             EditorSceneManager.MarkSceneDirty(scene);
-            Debug.Log("[ArkanoidSetup] Stage 52: moved the hall of fame left of the board (scene left dirty).");
+            // Saves on its own tick rather than through a paired disk-gated
+            // stage — see stage 53 below for why it had to stop being one.
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 52: moved the hall of fame left of the board and queued a scene save.");
             return;
         }
 
-        // Stage 53: persist stage 52, gated on the scene file still holding the
-        // hall where it used to stand.
-        if (File.ReadAllText(ToAbsolute(scene.path))
-            .Contains($"m_LocalPosition: {{x: {MainMenuPanel.ScreenSpacing}, y: 0, z: 0}}"))
-        {
-            EditorApplication.update += SaveSceneOnce;
-            Debug.Log("[ArkanoidSetup] Stage 53: queued scene save for the next editor tick.");
-            return;
-        }
+        // Stage 53 was the disk-gated save for stage 52, and it is gone: its
+        // gate was `the scene file still contains m_LocalPosition: {x: 20, y: 0,
+        // z: 0}`, the hall's old place — a gate on residual damage, which is
+        // only ever as good as that string not turning up in the scene for some
+        // other perfectly good reason. It did: the test bench's room was first
+        // stood one screen width right of the playfield, which is x 20, and the
+        // gate went true for ever — queueing a save on every reload and, worse,
+        // returning before every stage after it, so nothing downstream could
+        // run at all. That is what makes this class of bug expensive rather than
+        // merely noisy.
+        //
+        // Stage 52's own guard is an in-memory fact (a transform is where it is),
+        // so it needs no disk-side gate: it registers the deferred save itself,
+        // the way stages 70, 76, 85, 87 and 95 do. Nothing is lost — a stage that
+        // saves only when it has just changed something cannot loop by
+        // construction — and the aliasing is gone at the root rather than dodged.
+        // The bench room moved to x 40 as well, since standing where no gate is
+        // looking costs nothing (see BenchRoomX).
 
         // Stage 54: move the whole menu into a room of its own, a screen's
         // width left of the playfield, and pull its backdrop in to the width
@@ -2079,6 +2106,153 @@ public static class ArkanoidSetup
             return;
         }
 
+        // Stage 98: the test bench's room (see "The test bench" in CLAUDE.md).
+        // A room of its own off to the right of the playfield, the way the menu
+        // is off to its left, so that whatever stands on it is out of reach of
+        // either other room's 2D physics and needs no round to be running. It is
+        // authored **inactive**: GameManager switches it on when the code is
+        // typed, which is also why its reference is serialized rather than found
+        // — GameObject.Find cannot see an inactive object.
+        //
+        // Only the room and its backdrop are authored. Everything else the bench
+        // shows is spawned at runtime, which is the point: the arrangement is
+        // meant to be rewritten per task, and a scratchpad whose contents lived
+        // in the scene file would put every experiment into a scene diff.
+        var benchBackdropMaterial = AssetDatabase.LoadAssetAtPath<Material>(MenuBackdropMaterialPath);
+        if (FindRootObject("TestBench") == null && benchBackdropMaterial != null)
+        {
+            var benchRoom = new GameObject("TestBench");
+            benchRoom.transform.position = new Vector3(BenchRoomX, 0f, PlayfieldPlaneZ);
+            benchRoom.AddComponent<TestBench>();
+
+            // The same wall the round stands in front of, at the same gap, so a
+            // block photographed here throws the shadow it would throw in play —
+            // a bench that lit its subject differently from the game would be
+            // worse than no bench.
+            var benchBackdrop = new GameObject("BenchBackdrop");
+            benchBackdrop.transform.SetParent(benchRoom.transform, false);
+            benchBackdrop.transform.localPosition = new Vector3(0f, 0f, PlayfieldBackdropZ);
+            benchBackdrop.transform.localScale =
+                new Vector3(MenuBackdropWidth, 24f, PlayfieldBackdropDepth);
+            benchBackdrop.AddComponent<MeshFilter>().sharedMesh =
+                Resources.GetBuiltinResource<Mesh>("Cube.fbx");
+            var benchBackdropRenderer = benchBackdrop.AddComponent<MeshRenderer>();
+            benchBackdropRenderer.sharedMaterial = benchBackdropMaterial;
+            benchBackdropRenderer.shadowCastingMode =
+                UnityEngine.Rendering.ShadowCastingMode.Off;
+
+            benchRoom.SetActive(false);
+            EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+            Debug.Log("[ArkanoidSetup] Stage 98: built the test bench room (scene left dirty).");
+            return;
+        }
+
+        // The same stage, repairing a room that was built at the wrong X. The
+        // first version of BenchRoomX put it one screen width out, where its
+        // serialised position collided with stage 53's save gate (see
+        // BenchRoomX); moving the constant alone would have left the room
+        // standing in the old spot in every scene that had already saved it.
+        var standingBench = FindRootObject("TestBench");
+        if (standingBench != null
+            && Mathf.Abs(standingBench.transform.position.x - BenchRoomX) > 0.01f)
+        {
+            standingBench.transform.position = new Vector3(BenchRoomX, 0f, PlayfieldPlaneZ);
+            EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log($"[ArkanoidSetup] Stage 98: moved the test bench room to x {BenchRoomX} and queued a scene save.");
+            return;
+        }
+
+        // Stage 99: persist stage 98, gated on the scene file not yet naming the
+        // room. The room's own name is the new state's signature, which is the
+        // gate that cannot loop: it is a name nothing else in this scene carries.
+        var benchScene = SceneManager.GetActiveScene();
+        if (FindRootObject("TestBench") != null
+            && !File.ReadAllText(ToAbsolute(benchScene.path)).Contains("TestBench"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 99: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 100: wire the bench — its four shape prefabs and the ball — and
+        // hand the room to the GameManager. Only the shapes and the ball: the
+        // materials and their varieties are read off the GameManager at runtime
+        // rather than wired twice, so there is no second copy to drift.
+        //
+        // An in-memory fact, so like stages 70, 76, 85, 87 and 95 this saves on
+        // its own tick rather than through a paired disk-gated stage.
+        var benchObject = FindRootObject("TestBench");
+        var bench = benchObject != null ? benchObject.GetComponent<TestBench>() : null;
+        var manager = FindRootObject("GameManager");
+        var managerComponent = manager != null ? manager.GetComponent<GameManager>() : null;
+        if (bench != null && managerComponent != null)
+        {
+            var benchSo = new SerializedObject(bench);
+            var shapes = benchSo.FindProperty("shapePrefabs");
+            var benchBall = benchSo.FindProperty("ballPrefab");
+            var shapePrefabs = LoadBenchShapes();
+            var ballPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BallPrefabPath);
+
+            var managerSo = new SerializedObject(managerComponent);
+            var benchSlot = managerSo.FindProperty("testBench");
+
+            bool shapesStale = shapePrefabs != null && BenchShapesDiffer(shapes, shapePrefabs);
+            bool ballStale = ballPrefab != null
+                && benchBall.objectReferenceValue != ballPrefab.GetComponent<Ball>();
+            bool slotStale = benchSlot.objectReferenceValue != bench;
+
+            if (shapesStale || ballStale || slotStale)
+            {
+                if (shapesStale)
+                {
+                    shapes.arraySize = shapePrefabs.Length;
+                    for (int i = 0; i < shapePrefabs.Length; i++)
+                        shapes.GetArrayElementAtIndex(i).objectReferenceValue = shapePrefabs[i];
+                }
+                if (ballStale) benchBall.objectReferenceValue = ballPrefab.GetComponent<Ball>();
+                benchSo.ApplyModifiedPropertiesWithoutUndo();
+
+                if (slotStale)
+                {
+                    benchSlot.objectReferenceValue = bench;
+                    managerSo.ApplyModifiedPropertiesWithoutUndo();
+                }
+
+                EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+                EditorApplication.update += SaveSceneOnce;
+                Debug.Log("[ArkanoidSetup] Stage 100: wired the test bench and queued a scene save.");
+                return;
+            }
+        }
+    }
+
+    // The four block shapes the bench offers, in the order the demonstration
+    // board lays them out, so cycling through them on the bench walks the same
+    // ladder a round shows. Null if any one is not readable back yet, so the
+    // stage waits for a reload rather than wiring a hole.
+    static Brick[] LoadBenchShapes()
+    {
+        var paths = new[]
+        {
+            BrickPrefabPath, RoundedBrickPrefabPath, HalfBrickPrefabPath, RoundBrickPrefabPath,
+        };
+        var shapes = new Brick[paths.Length];
+        for (int i = 0; i < paths.Length; i++)
+        {
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(paths[i]);
+            shapes[i] = prefab != null ? prefab.GetComponent<Brick>() : null;
+            if (shapes[i] == null) return null;
+        }
+        return shapes;
+    }
+
+    static bool BenchShapesDiffer(SerializedProperty slot, Brick[] shapes)
+    {
+        if (slot.arraySize != shapes.Length) return true;
+        for (int i = 0; i < shapes.Length; i++)
+            if (slot.GetArrayElementAtIndex(i).objectReferenceValue != shapes[i]) return true;
+        return false;
     }
 
     // Each box block against the world-UV mesh it should be drawing. The same
