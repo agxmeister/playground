@@ -471,18 +471,40 @@ public class GameManager : MonoBehaviour
     {
         if (keyboard == null || testBench == null) return;
 
-        for (int i = 0; i < BenchCode.Length; i++)
+        // Advanced in a *loop* rather than one letter per frame, because more
+        // than one letter can arrive in the same frame and that is the normal
+        // case rather than the exotic one: an unfocused Editor runs at about ten
+        // frames a second, so a scripted BENCH typed at a tenth of a second a
+        // key puts two presses inside one frame regularly. The first version
+        // took a single letter per frame and treated the one beside it as a
+        // mismatch, which made the code work perhaps two times in three — and a
+        // door that opens two times in three reads as "my new screen is broken".
+        int reached = benchProgress;
+        while (benchProgress < BenchCode.Length
+            && keyboard[BenchCode[benchProgress]].wasPressedThisFrame)
+            benchProgress++;
+
+        if (benchProgress >= BenchCode.Length)
         {
-            if (!keyboard[BenchCode[i]].wasPressedThisFrame) continue;
-            benchProgress = i == benchProgress ? benchProgress + 1 : (i == 0 ? 1 : 0);
-            if (benchProgress < BenchCode.Length) return;
             benchProgress = 0;
             OpenBench();
             return;
         }
-        // A letter that is nowhere in the word is as much a mistake as one out
-        // of order.
-        if (keyboard.anyKey.wasPressedThisFrame) benchProgress = 0;
+
+        // Bail out the moment this frame advanced the word, and note *why*,
+        // because getting it wrong cost an hour: the reset below asks
+        // `anyKey.wasPressedThisFrame`, and that is true of the very letter that
+        // just advanced the word. Fall through to it and every letter after the
+        // first undoes itself, so the code can never be completed and reads as
+        // "the door does not open" while each individual keypress is arriving
+        // perfectly.
+        if (benchProgress != reached) return;
+
+        // A letter that is not the one wanted starts the word over — and may
+        // itself be its first letter, which is why the reset re-tests position
+        // zero rather than simply zeroing.
+        if (keyboard.anyKey.wasPressedThisFrame)
+            benchProgress = keyboard[BenchCode[0]].wasPressedThisFrame ? 1 : 0;
     }
 
     // The bench is a room, not an overlay: the menu is switched off and the view

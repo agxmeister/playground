@@ -22,6 +22,13 @@ using UnityEngine.InputSystem;
 // Reached by typing BENCH on the menu (GameManager.BenchCode). The room stands
 // off to the right of the playfield, out of reach of either other room's
 // physics, and is switched off entirely while it is not in use.
+//
+// A ball and a paddle can both be switched on, which is what makes the
+// *behaving* half of a block testable here and not only the looking half: with
+// a paddle in the room the whole rally is available — the arcade bounce, the
+// twist, the charge and its gauge, the rocket and its exhaust, rubble worth
+// catching — because the paddle is the round's own `Paddle` component with the
+// round's own keys, not a stand-in for it.
 public class TestBench : MonoBehaviour
 {
     // The shapes a block can be, wired in the same order the demonstration
@@ -31,6 +38,13 @@ public class TestBench : MonoBehaviour
     // Spawned only when the ball is asked for, since a bench with nothing moving
     // on it cannot time out, cannot lose and cannot end.
     [SerializeField] Ball ballPrefab;
+    // The playfield's own paddle, used as a *template* rather than driven: the
+    // paddle is authored scene content and has no prefab, so the bench copies it
+    // and switches the copy on. Copying it rather than writing a bench paddle is
+    // the point — every mechanic the paddle carries (the thrust, the charge, the
+    // gauge, the exhaust, the crash) comes along for free and can never drift
+    // from what a round does.
+    [SerializeField] Paddle paddleTemplate;
 
     // The materials and their varieties are read off the GameManager rather than
     // wired again here, deliberately: two copies of that wiring would be two
@@ -42,6 +56,10 @@ public class TestBench : MonoBehaviour
     const float SlotWidth = 1.64f;
     const float SlotHeight = 0.64f;
     const int Columns = 6;
+
+    // How far below the room's middle the bench's paddle stands. Low enough to
+    // leave the grid room above it, as a round's does.
+    const float PaddleDrop = 4.5f;
 
     // How much of a block's own hardness one press of the damage key spends.
     // A quarter, so the crack overlay's two stages can both be parked on: 0.25
@@ -60,8 +78,15 @@ public class TestBench : MonoBehaviour
     int seed = 1;
     int damageSteps;
     Ball ball;
+    Paddle paddle;
+    // True while the ball is sitting on the paddle waiting for SPACE, which is
+    // how a round serves and therefore the only way the charge can be practised:
+    // a push is paid to a ball that is *caught*, so a bench that launched for
+    // you would have nothing to catch.
+    bool waitingToServe;
     Transform blockHolder;
     Transform serveAnchor;
+    float halfWidth;
 
     // The room's own borders, so a ball let loose in here ricochets off the
     // frame exactly as it does in a round rather than sailing out of view.
@@ -85,6 +110,14 @@ public class TestBench : MonoBehaviour
             Destroy(ball.gameObject);
             ball = null;
         }
+        // The paddle is a copy of the round's, unparented like the ball, so it
+        // has to be destroyed rather than left to go away with the room.
+        if (paddle != null)
+        {
+            Destroy(paddle.gameObject);
+            paddle = null;
+        }
+        waitingToServe = false;
         if (blockHolder != null)
         {
             Destroy(blockHolder.gameObject);
@@ -93,6 +126,10 @@ public class TestBench : MonoBehaviour
         Debris.ClearAll();
         Ricochet.ClearAll();
         JetTrail.ClearAll();
+        // The charge gauge is an unparented root too, and a gauge left glowing
+        // under a paddle that is no longer there is the exact thing PowerWave's
+        // own OnDisable exists to prevent.
+        PowerWave.ClearAll();
     }
 
     void Update()
@@ -102,9 +139,12 @@ public class TestBench : MonoBehaviour
         var keyboard = Keyboard.current;
         if (keyboard == null) return;
 
-        // Deliberately not the arrow keys: a ball switched on brings a paddle's
-        // worth of arrow-reading with it, and a control that means two things
-        // depending on what else is switched on is a control nobody can use.
+        // Deliberately clear of every key the paddle reads, because the paddle
+        // can be standing here: it takes the arrows *and* A/D to move, S and DOWN
+        // to charge, and SPACE to thrust and serve. A control that means two
+        // things depending on what else is switched on is a control nobody can
+        // use — which is why damage is G and not the D it started as, D being the
+        // paddle's own "right".
         if (keyboard.zKey.wasPressedThisFrame) Step(ref material, BlockMaterials.Count, -1);
         if (keyboard.xKey.wasPressedThisFrame) Step(ref material, BlockMaterials.Count, 1);
         if (keyboard.cKey.wasPressedThisFrame) Step(ref shape, shapePrefabs.Length, -1);
@@ -117,8 +157,17 @@ public class TestBench : MonoBehaviour
         // Put the grid back exactly as it was, which is also how damage is
         // undone — there is no un-break, and a rebuild is honest about that.
         if (keyboard.fKey.wasPressedThisFrame) Rebuild();
-        if (keyboard.dKey.wasPressedThisFrame) Damage();
+        if (keyboard.gKey.wasPressedThisFrame) Damage();
         if (keyboard.bKey.wasPressedThisFrame) ToggleBall();
+        if (keyboard.pKey.wasPressedThisFrame) TogglePaddle();
+        // The serve, exactly as a round's: the launch takes the press and the
+        // paddle's own thrust takes the hold, so the one key never argues with
+        // itself (see Paddle).
+        if (waitingToServe && ball != null && keyboard.spaceKey.wasPressedThisFrame)
+        {
+            ball.Launch();
+            waitingToServe = false;
+        }
         // Q leaves, and it exists *because* ESC cannot be driven from outside:
         // Uplink's /input delivers letters happily and never delivers escape at
         // all, under either the short name or `<Keyboard>/escape` — measured,
@@ -128,9 +177,10 @@ public class TestBench : MonoBehaviour
         if (keyboard.qKey.wasPressedThisFrame && GameManager.Instance != null)
             GameManager.Instance.CloseBench();
 
-        // The ball has no paddle to be served off here, so it is simply put back
-        // when the room loses it.
-        if (ball != null && ball.transform.position.y < transform.position.y - 8f) ServeBall();
+        // A ball the room has lost is put back rather than left gone, since the
+        // bench's one moving part going missing would make it stop answering.
+        if (ball != null && !waitingToServe
+            && ball.transform.position.y < transform.position.y - 8f) ServeBall();
     }
 
     void Step(ref int value, int length, int by)
@@ -196,11 +246,42 @@ public class TestBench : MonoBehaviour
         {
             Destroy(ball.gameObject);
             ball = null;
+            waitingToServe = false;
             return;
         }
         if (ballPrefab == null) return;
         ball = Instantiate(ballPrefab);
         ServeBall();
+    }
+
+    // The paddle is copied out of the playfield rather than built, and it is
+    // Instantiate's *positioning* overload that makes that safe: `Paddle.Awake`
+    // reads `homeX` off its own transform and clamps its travel to either side
+    // of it, so a paddle created at the template's place and moved afterwards
+    // would spend the whole session trying to get back to the playfield. Handing
+    // the position to Instantiate puts it there before Awake ever runs.
+    void TogglePaddle()
+    {
+        if (paddle != null)
+        {
+            Destroy(paddle.gameObject);
+            paddle = null;
+            // The ball loses what it was resting on, so it is served afresh off
+            // the anchor rather than left attached to a destroyed transform.
+            if (ball != null) ServeBall();
+            return;
+        }
+        if (paddleTemplate == null) return;
+
+        var stand = new Vector3(transform.position.x,
+            transform.position.y - PaddleDrop, paddleTemplate.transform.position.z);
+        paddle = Instantiate(paddleTemplate, stand, paddleTemplate.transform.rotation);
+        paddle.name = "BenchPaddle";
+        // The template is switched off for as long as the bench is up, so the
+        // copy arrives switched off too.
+        paddle.gameObject.SetActive(true);
+        paddle.FitTo(halfWidth);
+        if (ball != null) ServeBall();
     }
 
     // Served off an anchor rather than placed by hand, because `Ball.Launch`
@@ -224,8 +305,21 @@ public class TestBench : MonoBehaviour
     void ServeBall()
     {
         if (ball == null) return;
+
+        // With a paddle standing, the ball is rolled off it and waits for SPACE,
+        // which is the only shape in which the charge means anything: a push is
+        // paid to a ball at the moment it is caught.
+        if (paddle != null)
+        {
+            ball.AttachTo(paddle.transform);
+            waitingToServe = true;
+            return;
+        }
+
+        // Without one, it launches itself, so an unattended bench keeps moving.
         ball.AttachTo(ServeAnchor());
         ball.Launch();
+        waitingToServe = false;
     }
 
     void FitToFrame()
@@ -234,8 +328,13 @@ public class TestBench : MonoBehaviour
         if (camera == null) return;
         fittedTo = new Vector2Int(Screen.width, Screen.height);
         float planeZ = transform.position.z;
+        var extents = Border.FrameExtents(camera, planeZ);
+        halfWidth = extents.x;
         Border.Fit(transform, new Vector2(transform.position.x, camera.transform.position.y),
-            Border.FrameExtents(camera, planeZ), planeZ);
+            extents, planeZ);
+        // A window resized under a standing paddle would otherwise leave its
+        // travel measured against the frame it was born in.
+        if (paddle != null) paddle.FitTo(halfWidth);
     }
 
     // The readout is the point of the bench as much as the blocks are: a
@@ -257,9 +356,23 @@ public class TestBench : MonoBehaviour
         };
         var text = $"TEST BENCH\n{shapeName}  |  {kind}  {hardness}"
             + $"\ncount {count}   seed {seed}   damage {damageSteps} x {DamageStep:0.00}"
-            + $"\nball {(ball != null ? "on" : "off")}"
+            + $"\nball {(ball != null ? "on" : "off")}   paddle {(paddle != null ? "on" : "off")}"
+            // The paddle's own numbers, because the mechanics it carries are
+            // invisible until they fire: a charge that is not filling and a
+            // paddle that is not drifting look exactly like a paddle standing
+            // still, and one of those is a bug.
+            + (paddle != null
+                ? $"   charge {paddle.Charge:0.00}   drift {paddle.Drift:0}"
+                : "")
+            // Time itself, because a frozen bench looks exactly like a broken
+            // one: everything driven by deltaTime stands still while the keys go
+            // on being read, which is a very confusing pair of symptoms to be
+            // handed without this number. GameManager's exit prompt sets
+            // timeScale to 0 and timeScale outlives the round that set it.
+            + $"\ntimeScale {Time.timeScale:0.00}"
             + "\n\nZ/X material   C/V shape   N/M count"
-            + "\nD damage   F rebuild   R re-roll   B ball   Q/ESC menu";
+            + "\nG damage   F rebuild   R re-roll"
+            + "\nB ball   P paddle   SPACE serve   Q/ESC menu";
 
         var box = new Rect(24f, 24f, 420f, 190f);
         GUI.Box(box, GUIContent.none);

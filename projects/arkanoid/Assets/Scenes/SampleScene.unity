@@ -1967,6 +1967,7 @@ MonoBehaviour:
   - {fileID: 3031071559479064608, guid: eb6cdfa6a1f644902b4a7781dfd46d2a, type: 3}
   - {fileID: 1620502014132224024, guid: 273cd1b9aa2da48419d4c4474dd05281, type: 3}
   ballPrefab: {fileID: 6495988645356787210, guid: 051e0d0cb467142baaf1d3d24d6b22ee, type: 3}
+  paddleTemplate: {fileID: 887666782}
 --- !u!4 &442042123
 Transform:
   m_ObjectHideFlags: 0

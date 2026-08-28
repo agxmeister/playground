@@ -2175,10 +2175,11 @@ public static class ArkanoidSetup
             return;
         }
 
-        // Stage 100: wire the bench — its four shape prefabs and the ball — and
-        // hand the room to the GameManager. Only the shapes and the ball: the
-        // materials and their varieties are read off the GameManager at runtime
-        // rather than wired twice, so there is no second copy to drift.
+        // Stage 100: wire the bench — its four shape prefabs, the ball, and the
+        // playfield's paddle as a template — and hand the room to the
+        // GameManager. Only those: the materials and their varieties are read off
+        // the GameManager at runtime rather than wired twice, so there is no
+        // second copy to drift.
         //
         // An in-memory fact, so like stages 70, 76, 85, 87 and 95 this saves on
         // its own tick rather than through a paired disk-gated stage.
@@ -2191,8 +2192,14 @@ public static class ArkanoidSetup
             var benchSo = new SerializedObject(bench);
             var shapes = benchSo.FindProperty("shapePrefabs");
             var benchBall = benchSo.FindProperty("ballPrefab");
+            var benchPaddle = benchSo.FindProperty("paddleTemplate");
             var shapePrefabs = LoadBenchShapes();
             var ballPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BallPrefabPath);
+            // The playfield's paddle is authored scene content and has no prefab,
+            // so the bench copies the object itself at runtime.
+            var roundPaddleObject = FindRootObject("Paddle");
+            var roundPaddle = roundPaddleObject != null
+                ? roundPaddleObject.GetComponent<Paddle>() : null;
 
             var managerSo = new SerializedObject(managerComponent);
             var benchSlot = managerSo.FindProperty("testBench");
@@ -2200,9 +2207,11 @@ public static class ArkanoidSetup
             bool shapesStale = shapePrefabs != null && BenchShapesDiffer(shapes, shapePrefabs);
             bool ballStale = ballPrefab != null
                 && benchBall.objectReferenceValue != ballPrefab.GetComponent<Ball>();
+            bool paddleStale = roundPaddle != null
+                && benchPaddle.objectReferenceValue != roundPaddle;
             bool slotStale = benchSlot.objectReferenceValue != bench;
 
-            if (shapesStale || ballStale || slotStale)
+            if (shapesStale || ballStale || paddleStale || slotStale)
             {
                 if (shapesStale)
                 {
@@ -2211,6 +2220,7 @@ public static class ArkanoidSetup
                         shapes.GetArrayElementAtIndex(i).objectReferenceValue = shapePrefabs[i];
                 }
                 if (ballStale) benchBall.objectReferenceValue = ballPrefab.GetComponent<Ball>();
+                if (paddleStale) benchPaddle.objectReferenceValue = roundPaddle;
                 benchSo.ApplyModifiedPropertiesWithoutUndo();
 
                 if (slotStale)
