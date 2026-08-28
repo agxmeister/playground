@@ -40,7 +40,17 @@ public static class ArkanoidSetup
     };
     static string GrainTexturePath(string name) => TexturesFolder + "/" + name + ".png";
     static string GrainNormalPath(string name) => TexturesFolder + "/" + name + "Normal.png";
-    const int GrainTextureSize = 256;
+    // 1024 px laid at half a tile per unit (PolymerGrainTiles) is the same
+    // 512 texels a unit the original 256 px at two tiles a unit gave, but a
+    // tile that spans two units is wider than any block face, so no face ever
+    // shows the same patch of grain twice. At 256 px a full slab carried three
+    // copies of the tile side by side, and with the coarse Crumb grain's few
+    // big caps the repeat was plain to see.
+    const int GrainTextureSize = 1024;
+    // How much bigger that tile is than the 256 px the grains were authored
+    // at: cap radii scale by it and cap counts by its square, so the grain
+    // comes out the same size on a block as it always did.
+    const float GrainTileScale = GrainTextureSize / 256f;
 
     // The band a Polymer block's batch colour is drawn from: the whole sheet,
     // near-white through near-black, which is what the reference for the
@@ -2330,7 +2340,7 @@ public static class ArkanoidSetup
     // out at. The same number GameManager.GrainTilesPerUnit holds for the
     // per-instance looks, written here because an editor script cannot read a
     // private const out of a runtime one — if either moves, both move.
-    const float PolymerGrainTiles = 2f;
+    const float PolymerGrainTiles = 0.5f;
 
     // The first grain normal still sitting on the default importer type, or null
     // once every one of them has been imported as a normal map.
@@ -3092,22 +3102,22 @@ public static class ArkanoidSetup
             // Orange peel: one dense layer of medium caps, heavily overlapping,
             // which is the dominant look on the reference sheet.
             case GrainKind.Pebble:
-                ScatterCaps(height, size, random, 220, 10f, 18f);
-                normalStrength = 9f;
+                ScatterCaps(height, size, random, 220, 10f, 18f, GrainTileScale);
+                normalStrength = 9f * GrainTileScale;
                 break;
             // The tight even speckle of the pale tiles. Far more, far smaller:
             // at block size this reads as a softened sheen rather than as
             // countable bumps, which is the point of it.
             case GrainKind.Stipple:
-                ScatterCaps(height, size, random, 1400, 3f, 6f);
-                normalStrength = 4f;
+                ScatterCaps(height, size, random, 1400, 3f, 6f, GrainTileScale);
+                normalStrength = 4f * GrainTileScale;
                 break;
             // Coarse granulate: big caps for the chunk, then a fine layer over
             // the top so the chunks themselves are not smooth.
             default:
-                ScatterCaps(height, size, random, 90, 18f, 34f);
-                ScatterCaps(height, size, random, 260, 5f, 10f);
-                normalStrength = 13f;
+                ScatterCaps(height, size, random, 90, 18f, 34f, GrainTileScale);
+                ScatterCaps(height, size, random, 260, 5f, 10f, GrainTileScale);
+                normalStrength = 13f * GrainTileScale;
                 break;
         }
 
@@ -3118,10 +3128,15 @@ public static class ArkanoidSetup
     // Rounded caps laid down wrapped, combined by max. The falloff is
     // smoothstep on the radius, so a cap meets the flat around it without a
     // crease — a linear cone would put a hard rim in the normal map and read as
-    // a field of spikes.
+    // a field of spikes. Count and radii are authored for a 256 px tile;
+    // `scale` is how much bigger the tile actually is, and grows the radii by
+    // it and the count by its square so the grain keeps its density.
     static void ScatterCaps(float[] height, int size, System.Random random, int count,
-        float minRadius, float maxRadius)
+        float minRadius, float maxRadius, float scale)
     {
+        count = Mathf.RoundToInt(count * scale * scale);
+        minRadius *= scale;
+        maxRadius *= scale;
         for (int i = 0; i < count; i++)
         {
             float cx = (float)random.NextDouble() * size;

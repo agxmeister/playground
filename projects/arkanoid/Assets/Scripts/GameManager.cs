@@ -99,14 +99,15 @@ public class GameManager : MonoBehaviour
     // How coarse a block's surface grain reads, as tiles of the grain texture
     // per world unit. One number settles it for all four block shapes, whose
     // meshes lay out UVs four different ways — Brick.grainUvPerUnit is what each
-    // of them divides it by. Two puts a tile across half a unit, so a full
-    // slab's face carries three of them side by side and one up its height,
-    // which at the grain textures' own resolution leaves the moulding finer than
-    // the screen can resolve rather than coarser.
+    // of them divides it by. Half puts one tile across two units, wider than
+    // any block face, so no face ever shows the same patch of grain twice —
+    // at two tiles a unit a full slab carried the tile three times side by
+    // side and the repeat was plain to see. The grain textures are 1024 px, so
+    // this still leaves the moulding finer than the screen can resolve.
     // Public because the test bench shows the same blocks a round does and has
     // to roll them the same way; a bench that moulded its grain at a different
     // size would be answering a question nobody asked.
-    public const float GrainTilesPerUnit = 2f;
+    public const float GrainTilesPerUnit = 0.5f;
 
     State state;
     State endState;
