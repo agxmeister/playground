@@ -154,6 +154,65 @@ public static class ArkanoidSetup
     // plainly there while the face stays a face.
     const float RoundedBrickCornerRadius = 0.2f;
     const float RoundBrickDiameter = 0.5f;
+    // How far a box block's edges are cut back, in world units. Cosmetic only:
+    // the BoxCollider2D is untouched, so the ball still reflects off the square
+    // outline the block used to draw — the bevel is a face the light catches,
+    // not a shape the physics knows about. A hard 90-degree edge under this
+    // scene's single head-on light returns the same value on both sides of
+    // itself and reads as a printed rectangle; a chamfer that is one facet wide
+    // puts a bright line down the top edge and a dark one down the bottom, which
+    // is what says "moulded" rather than "drawn". 0.03 is roughly four pixels on
+    // the block's edge at the framing the round is played at: enough to catch,
+    // too little to change the silhouette anyone is aiming at.
+    const float BlockBevel = 0.03f;
+    // How far each end of a box block is drawn in, front to back — a draft
+    // angle, the taper a moulded part carries so it can leave its tool. Here it
+    // is doing a job the bevel could not.
+    //
+    // A square end face is the worst surface this scene can present. Its normal
+    // is (+/-1, 0, 0), which is exactly perpendicular to the key light, so it
+    // takes none of it; and the camera sees it at about 72 degrees of incidence,
+    // where a dielectric's Fresnel term climbs towards a mirror. What is left is
+    // a flat, pale, blue reflection of the ambient sky standing beside a warm
+    // block face, and it reads as a different material rather than as the side
+    // of the same one. Measured on a dark Polymer block, the strip's blue cast
+    // was b−r of +17 against the face's −8.
+    //
+    // Neither of the obvious answers works on it. A fill light cannot: on a
+    // near-black albedo the diffuse term is a couple of percent, and the blue is
+    // a *reflection* rather than an absence of light (a white fill at 0.5 moved
+    // it by 6 of 255). Tinting that fill warm cannot either, because a
+    // normal-mapped front face catches a side light too, so anything added to
+    // the end is added to the face beside it — measured, the gap came out a
+    // shade wider.
+    //
+    // A taper answers both halves at once, and it is geometry rather than
+    // lighting. At 0.2 over the 0.6 depth the end's normal becomes about
+    // (0.96, 0, -0.29): it now takes roughly 29% of the key light, so it is lit,
+    // warm and carries its grain; and the camera meets it at about 52 degrees
+    // instead of 72, which is off the steep part of the Fresnel curve. **The
+    // front face keeps its full size** — the taper runs backwards, away from the
+    // player — so the silhouette a ball is aimed at is unchanged, and so is the
+    // collider, which was only ever the front outline.
+    // **Zero: a block is a box, and its back face is the same size as its
+    // front.** The taper is kept as a dial rather than deleted because the
+    // reasoning it came from is still sound — it is just no longer needed here.
+    //
+    // It was introduced to fix the end faces. A square end has a normal exactly
+    // perpendicular to the key light, so it took none of it, and the camera met
+    // it at about 72 degrees where a dielectric's Fresnel term climbs towards a
+    // mirror; what was left was a flat pale reflection of the environment beside
+    // a warm face. Tapering the block turned that end into a facet the key light
+    // could reach and dropped the viewing angle off the steep part of the curve,
+    // and it worked — the strip went from about eight pixels to one.
+    //
+    // What superseded it is the edge shading being flattened (see the normals
+    // in BuildWorldUvBoxMesh): every edge surface now takes the *front* face's
+    // normal, so an end face shades as the face whatever angle it is really at.
+    // With that in place the taper buys no light at all and costs the block its
+    // shape — a drafted box is visibly not a box, most of all on the translucent
+    // materials where the far side shows through the near one.
+    const float BlockDraft = 0f;
     // The main menu's 3D content: an opaque backdrop box across the whole
     // frame, and in front of it a small playable scene — the word ARKANOID as
     // one hittable brick per letter, two option slabs, a paddle and a ball.
@@ -433,6 +492,72 @@ public static class ArkanoidSetup
     // gap x tan(pitch) — a steeper, "higher" light smears the shadow further
     // down, and a shallower one tucks it back in behind the object.
     const float LightPitch = 30f;
+    // Two fill lights stand either side of the rooms, aimed dead horizontally,
+    // and they exist for one face: a block's ends. The main light points along
+    // +Z and tilts down, so for a face whose normal is +/-X the dot product is
+    // exactly zero — those faces get no direct light at all, and a grain that
+    // lives in a normal map has nothing to catch. They came back as flat pale
+    // panels beside every block off the centre of the screen, which at this
+    // camera is most of them: a 0.6-deep block seen 28 degrees off axis shows
+    // about a sixth of its width as end face.
+    //
+    // Aiming them *exactly* horizontally is what keeps them mostly off the faces
+    // the main light already owns: a direction of (+/-1, 0, 0) has a zero dot
+    // with the flat front, top and bottom faces, so what they reach is the ends,
+    // the bevels and the curved shapes' flanks. "Mostly" and not "entirely",
+    // measured: a normal-mapped face's shading normals are tilted off its
+    // geometric one, so the grain on the front face catches these too. That is
+    // wanted where it happens — a side light is what makes moulding read — but
+    // it is why they cannot be used to change the ends' colour alone.
+    //
+    // Their shadows are off, which is the other half of it. A fill that cast
+    // would put a second shadow of every object on the backdrop, and the
+    // shadows in this scene are the depth cue the whole look rests on — one
+    // light, one shadow. At 0.5 an end face comes out at a bit over half the
+    // front's brightness, which reads as the shaded side of a solid object;
+    // brighter and the block starts to look lit from three directions at once.
+    const float FillLightIntensity = 0f;
+    // A neutral sky, standing in for the URP template's procedural one.
+    //
+    // `m_AmbientMode` is Skybox, so the skybox is not scenery here — the camera
+    // clears to a solid colour and never draws it — it is the *only* source of
+    // ambient light and of the environment reflection. The template's is the
+    // default procedural sky, and it is blue. That is where every blue cast
+    // measured on this scene's blocks came from: an end face, a bevel, a
+    // silhouette pixel — anywhere the key light does not reach, what is left is
+    // a blue sky, and it sits beside a warm block face and reads as a foreign
+    // material rather than as shading.
+    //
+    // Neutral rather than *dimmed*, deliberately. The four metal materials have
+    // no reflection probe in this scene and take their entire look from this
+    // probe (see "A block is a shape and a material"), so turning the ambient
+    // down would flatten Titanium, Inconel, Waspaloy and Neutronium to nothing.
+    // A grey sky of the same strength costs them no light at all and costs the
+    // blocks their blue edge.
+    const string NeutralEnvironmentPath = TexturesFolder + "/NeutralEnvironment.cubemap";
+    // The flat ambient's own colour: neutral, at about the strength the blue
+    // sky was giving. Neutral is the whole point — every "grey border" on a
+    // block this session was this light, and it was only ever conspicuous
+    // because it was *blue* beside a warm face, not because it was bright.
+    // Written in sRGB and converted with .linear on the way in, like every other
+    // colour here.
+    static readonly Color AmbientColor = new Color(0.23f, 0.23f, 0.23f);
+    // What the environment returns, in every direction. Proven to be the right
+    // target before being built: `reflectionIntensity` is applied at shading
+    // time and so cannot be stale, and dropping it to zero took the border
+    // column count from 1 to 0 in a single reload. That named the environment
+    // reflection as the source without any argument about caches.
+    static readonly Color EnvironmentColor = new Color(0.30f, 0.30f, 0.30f);
+    // White, and warm was tried and measured and abandoned. The end faces read
+    // blue against a warm block face (b−r of +17 on the strip against −8 on the
+    // face), and a warm fill looks like the obvious answer to that. It is not:
+    // at 1.2 warm the strip's cast improved to +11 but the *face* went to −15,
+    // so the gap between them came out a shade wider than it started. The
+    // reason is the grain — a normal-mapped face's shading normals are tilted
+    // off −Z, so a horizontal light lands on the front face's bumps too, and
+    // anything added to the ends is added to the front along with it. No light
+    // colour closes a gap it widens at both ends.
+    static readonly Color FillLightColor = Color.white;
 
     [InitializeOnLoadMethod]
     static void Setup()
@@ -856,7 +981,7 @@ public static class ArkanoidSetup
         // this is purely about where its gizmo sits in the hierarchy/scene
         // view. A from-scratch rebuild already creates the light at the
         // origin, so this stage only fires on the template-authored scene.
-        var sceneLight = Object.FindAnyObjectByType<Light>(FindObjectsInactive.Include);
+        var sceneLight = MainSceneLight();
         if (sceneLight != null && sceneLight.transform.position != Vector3.zero)
         {
             sceneLight.transform.position = Vector3.zero;
@@ -2069,7 +2194,17 @@ public static class ArkanoidSetup
         // — which draws the far face and the inside of the box, and reads as a
         // stepped, hollow, corrupt block. A guard that only asked whether the
         // file existed could never have repaired that.
-        if (!File.Exists(ToAbsolute(BrickBoxMeshPath)) || BlockBoxWindingIsInverted())
+        //
+        // The guard also fires when the mesh on disk is not chamfered to the
+        // current BlockBevel, which is how the bevel is retuned: change the
+        // constant and the meshes are rewritten, and stage 97 below — which is
+        // already the standing repair for what an asset rewrite does to a
+        // prefab's reference — puts them back on the two prefabs.
+        if (!File.Exists(ToAbsolute(BrickBoxMeshPath))
+            || BlockBoxWindingIsInverted()
+            || BlockBoxBevelIsStale()
+            || BlockBoxDraftIsStale()
+            || BlockBoxIsFaceted())
         {
             Directory.CreateDirectory(ToAbsolute(MeshesFolder));
             AssetDatabase.CreateAsset(
@@ -2079,7 +2214,7 @@ public static class ArkanoidSetup
                 BuildWorldUvBoxMesh("HalfBrickBox", new Vector3(HalfBrickWidth, BrickHeight, BrickDepth)),
                 HalfBrickBoxMeshPath);
             AssetDatabase.SaveAssets();
-            Debug.Log("[ArkanoidSetup] Stage 96: wrote the world-UV block box meshes.");
+            Debug.Log($"[ArkanoidSetup] Stage 96: wrote the world-UV block box meshes, bevelled {BlockBevel}, drafted {BlockDraft}.");
             return;
         }
 
@@ -2245,6 +2380,154 @@ public static class ArkanoidSetup
                 return;
             }
         }
+
+        // Stage 103: a neutral environment. Two settings, and between them they
+        // are the last of the "grey border" on a block (see "A square block's
+        // edges are cut").
+        //
+        // What the border actually is: the drafted end facet and the bevel take
+        // almost no key light, so what they return is the environment — and the
+        // environment was blue. Against a warm block face that reads as a
+        // foreign material rather than as shading, at any width, down to the one
+        // pixel it had shrunk to.
+        //
+        // **The reflection is a flat cubemap, not a sky, and that distinction is
+        // the fix.** The first attempt hung a `Skybox/Procedural` material with a
+        // grey tint and called it neutral. It is not: that shader simulates
+        // Rayleigh scattering, which is *why* real skies are blue, so a grey
+        // tint on it is still a blue sky — measured, the border column stayed at
+        // b−r of +9.5 with it hung. Six grey faces have no gradient to be blue
+        // in. `defaultReflectionMode` is therefore Custom rather than Skybox.
+        //
+        // Neutral rather than dimmer, deliberately: the four metals have no
+        // reflection probe in this scene and take their entire look from this
+        // one (see "A block is a shape and a material"), so turning the
+        // environment down would flatten Titanium, Inconel, Waspaloy and
+        // Neutronium to nothing. A grey environment of the same strength costs
+        // them no light and costs the blocks their blue edge.
+        //
+        // A standing repair, and an in-memory fact, so it saves on its own tick.
+        if (RenderSettings.ambientMode != UnityEngine.Rendering.AmbientMode.Flat
+            || RenderSettings.ambientLight != AmbientColor.linear
+            || RenderSettings.defaultReflectionMode
+                != UnityEngine.Rendering.DefaultReflectionMode.Custom
+            || RenderSettings.customReflectionTexture == null
+            || AssetDatabase.GetAssetPath(RenderSettings.customReflectionTexture)
+                != NeutralEnvironmentPath)
+        {
+            var cube = AssetDatabase.LoadAssetAtPath<Cubemap>(NeutralEnvironmentPath);
+            if (cube == null)
+            {
+                Directory.CreateDirectory(ToAbsolute(TexturesFolder));
+                cube = BuildFlatCubemap(EnvironmentColor);
+                AssetDatabase.CreateAsset(cube, NeutralEnvironmentPath);
+                AssetDatabase.SaveAssets();
+            }
+            // Flat ambient, for the same reason the reflection is a cubemap:
+            // with AmbientMode.Skybox the ambient probe is cached off the sky and
+            // hanging a different sky does not refresh it. The neutral sky was
+            // assigned, saved, and the rendered frame came back *byte for byte
+            // identical* — as clear a "this did nothing" as a measurement gets,
+            // and DynamicGI.UpdateEnvironment did not clear it either. Flat mode
+            // reads this field directly, so it is live.
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+            RenderSettings.ambientLight = AmbientColor.linear;
+            RenderSettings.defaultReflectionMode =
+                UnityEngine.Rendering.DefaultReflectionMode.Custom;
+            RenderSettings.customReflectionTexture = cube;
+            RenderSettings.reflectionIntensity = 1f;
+            DynamicGI.UpdateEnvironment();
+            EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 103: hung a neutral environment and queued a scene save.");
+            return;
+        }
+
+        // Stage 101: the two horizontal fill lights (see FillLightIntensity).
+        // Each is named for where it stands rather than for where it points, so
+        // FillLeft is the one on the left of the rooms shining rightwards, and
+        // it is the right-hand end faces it reaches. Directional lights are
+        // global, so one pair serves the playfield, the menu and the bench
+        // alike and none of the three needs its own.
+        //
+        // A standing repair rather than a one-off build, so FillLightIntensity
+        // is a live dial: it re-aims and re-dims a fill that does not match the
+        // constants instead of only creating a missing one. The guard is an
+        // in-memory fact (a light is as bright as it is), so this saves on its
+        // own tick the way stages 70, 76, 85, 87 and 95 do — but stage 102 below
+        // still carries the disk gate for the *first* build, since a scene that
+        // has never had the lights is a different question from one whose lights
+        // have drifted.
+        if (FillLightIsStale("FillLeft", 90f) || FillLightIsStale("FillRight", -90f))
+        {
+            SetUpFillLight("FillLeft", 90f);
+            SetUpFillLight("FillRight", -90f);
+            EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log($"[ArkanoidSetup] Stage 101: stood the two horizontal fill lights at {FillLightIntensity} and queued a scene save.");
+            return;
+        }
+
+        // Stage 102: persist stage 101, gated on the scene file not yet naming
+        // the left one. The new state's own signature, per the rule the bench's
+        // save gate is written to: a name nothing else in this scene carries,
+        // rather than a pattern some other object could legitimately match.
+        var fillScene = SceneManager.GetActiveScene();
+        if (FindRootObject("FillLeft") != null
+            && !File.ReadAllText(ToAbsolute(fillScene.path)).Contains("FillLeft"))
+        {
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log("[ArkanoidSetup] Stage 102: queued scene save for the next editor tick.");
+            return;
+        }
+    }
+
+    // A cubemap of one colour on all six faces. Small on purpose: the shader
+    // samples a blurred mip for a rough surface and the top one for a smooth
+    // surface, and every mip of a flat colour is that colour.
+    static Cubemap BuildFlatCubemap(Color color)
+    {
+        const int size = 16;
+        var cube = new Cubemap(size, TextureFormat.RGBA32, false);
+        var pixels = new Color[size * size];
+        for (int i = 0; i < pixels.Length; i++) pixels[i] = color;
+        foreach (CubemapFace face in System.Enum.GetValues(typeof(CubemapFace)))
+        {
+            if (face == CubemapFace.Unknown) continue;
+            cube.SetPixels(pixels, face);
+        }
+        cube.Apply();
+        return cube;
+    }
+
+    // One fill: a directional light lying flat, casting nothing. `yaw` is the
+    // whole of its aim — no pitch at all, because a pitch is exactly what would
+    // spill it onto the faces the main light already owns. Creates the object if
+    // it is missing and otherwise corrects the one standing, so the constants
+    // above are the single source of truth for both.
+    static void SetUpFillLight(string name, float yaw)
+    {
+        var go = FindRootObject(name) ?? new GameObject(name);
+        go.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+        var light = go.GetComponent<Light>() ?? go.AddComponent<Light>();
+        light.type = LightType.Directional;
+        light.shadows = LightShadows.None;
+        light.intensity = FillLightIntensity;
+        light.color = FillLightColor.linear;
+    }
+
+    static bool FillLightIsStale(string name, float yaw)
+    {
+        var go = FindRootObject(name);
+        if (go == null) return true;
+        var light = go.GetComponent<Light>();
+        if (light == null) return true;
+        var wanted = FillLightColor.linear;
+        return Mathf.Abs(light.intensity - FillLightIntensity) > 0.001f
+            || Mathf.Abs(light.color.r - wanted.r) > 0.005f
+            || Mathf.Abs(light.color.g - wanted.g) > 0.005f
+            || Mathf.Abs(light.color.b - wanted.b) > 0.005f
+            || Quaternion.Angle(go.transform.rotation, Quaternion.Euler(0f, yaw, 0f)) > 0.5f;
     }
 
     // The four block shapes the bench offers, in the order the demonstration
@@ -2307,6 +2590,116 @@ public static class ArkanoidSetup
         // The box is centred on the origin, so a corner's own position is the
         // direction "outward" at that corner.
         return Vector3.Dot(face, a) < 0f;
+    }
+
+    // Whether the block box mesh on disk carries a bevel of the current width.
+    // Measured off the mesh's own vertices rather than gated on the file being
+    // absent, for the same reason stage 89's guard measures the rounded block's
+    // corner radius: the path is the one it has always been written to, so a
+    // file-existence gate could never repair a mesh that is present and cut to
+    // an older number.
+    //
+    // The measurement: every vertex sitting on one of the two side faces
+    // (|x| = 0.5) reaches exactly the bevelled half-extent up the Y axis, so the
+    // furthest of them is `0.5 - BlockBevel / BrickHeight` in local units. An
+    // unbevelled box reaches the full 0.5 there and measures as a bevel of zero.
+    static bool BlockBoxBevelIsStale()
+    {
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(BrickBoxMeshPath);
+        if (mesh == null) return false;
+
+        // Keyed on the *widest* vertices rather than on a literal 0.5, which is
+        // what the draft below cost this guard the first time round: the taper
+        // pulls every vertex in by some amount, so after it there is no vertex
+        // at the full 0.5 any more, the search found nothing, and the guard
+        // quietly answered "not stale" to every question. A guard that can only
+        // fail silently is worse than no guard. The Y coordinates are untouched
+        // by the taper, so measuring them against the widest X is exact.
+        float widest = 0f;
+        foreach (var vertex in mesh.vertices) widest = Mathf.Max(widest, Mathf.Abs(vertex.x));
+        if (widest <= 0f) return false;
+
+        float reach = 0f;
+        foreach (var vertex in mesh.vertices)
+            if (Mathf.Abs(Mathf.Abs(vertex.x) - widest) < 0.001f)
+                reach = Mathf.Max(reach, Mathf.Abs(vertex.y));
+        if (reach <= 0f) return false;
+
+        return Mathf.Abs((0.5f - reach) * BrickHeight - BlockBevel) > 0.001f;
+    }
+
+    // Whether the block box mesh on disk carries the current draft, measured off
+    // its own vertices the way the bevel above is, and for the same reason.
+    //
+    // The taper is linear in z, so it can be solved from two widths — but from
+    // the right two, and the first cut of this got that wrong and left the stage
+    // rewriting the meshes on every reload. The widest vertex is *not* at the
+    // full 0.5: it sits on the front edge of a side face at z = -(0.5 - bevel/
+    // depth), where the taper has already run a sliver of its course. Treating
+    // it as untapered measured a draft of 0.192 where 0.2 was written, which is
+    // outside any tolerance tight enough to be worth having.
+    //
+    // With b = bevel/depth, the two side-face edges sit at z + 0.5 = b and
+    // 1 - b, so their widths are in the ratio r = (1 - k(1-b)) / (1 - k b) for a
+    // local taper k. Inverting that gives k = (1 - r) / ((1 - b) - r b), and the
+    // draft in world units is k * width / 2. An untapered box answers zero.
+    // Whether the mesh on disk is flat-shaded across its bevel. A guard on the
+    // *shading* is needed beside the two on the shape because smoothing the
+    // chamfer moved no vertex at all: geometry-only guards would have looked at
+    // a mesh that needed rewriting and seen nothing to complain about.
+    //
+    // The measurement is a count. With the edge shading flattened, every vertex
+    // takes either the front normal or the back one, so the whole box holds
+    // exactly **two** distinct normals. Earlier versions held six (one per face,
+    // with the bevel smoothed into its neighbours) or twenty-six (one per
+    // polygon, flat-shaded). Neither is a state this builder produces any more,
+    // so the comparison is exact rather than a threshold — and it fires on both
+    // older meshes, which is what makes this the repair as well as the check.
+    static bool BlockBoxIsFaceted()
+    {
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(BrickBoxMeshPath);
+        if (mesh == null) return false;
+
+        var distinct = new HashSet<Vector3Int>();
+        foreach (var normal in mesh.normals)
+            distinct.Add(new Vector3Int(
+                Mathf.RoundToInt(normal.x * 100f),
+                Mathf.RoundToInt(normal.y * 100f),
+                Mathf.RoundToInt(normal.z * 100f)));
+        return distinct.Count != 2;
+    }
+
+    //
+    // Both meshes are measured, not just the slab's. The taper is a proportion,
+    // so the half-brick's expected draft in world units is its own share of the
+    // slab's — and when the rule changed from "a fixed distance" to "a fixed
+    // proportion" the slab's number did not move at all. A guard that only ever
+    // looked at BrickBox would have seen nothing to do and left the half-brick
+    // standing as the wedge that prompted the change.
+    static bool BlockBoxDraftIsStale() =>
+        DraftIsStale(BrickBoxMeshPath, BrickWidth)
+        || DraftIsStale(HalfBrickBoxMeshPath, HalfBrickWidth);
+
+    static bool DraftIsStale(string path, float width)
+    {
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+        if (mesh == null) return false;
+
+        float front = 0f, back = 0f;
+        foreach (var vertex in mesh.vertices)
+        {
+            if (vertex.z < 0f) front = Mathf.Max(front, Mathf.Abs(vertex.x));
+            else back = Mathf.Max(back, Mathf.Abs(vertex.x));
+        }
+        if (front <= 0f || back <= 0f) return false;
+
+        float b = BlockBevel / BrickDepth;
+        float ratio = back / front;
+        float taper = (1f - ratio) / ((1f - b) - ratio * b);
+        // The wanted draft for this mesh is its own share of the slab's, which
+        // is what "the same proportion on every box block" means in world units.
+        float wanted = BlockDraft * width / BrickWidth;
+        return Mathf.Abs(taper * width / 2f - wanted) > 0.002f;
     }
 
     static string FirstStaleBlockBoxMesh()
@@ -3164,13 +3557,29 @@ public static class ArkanoidSetup
         }
     }
 
-    // Near white throughout: the grain's job in the albedo is only to keep the
-    // surface from being one flat value, since the block's actual colour is the
-    // per-instance tint multiplying this. Grayscale, like BrickWall.png, for the
-    // same reason.
+    // Near white throughout: the block's actual colour is the per-instance tint
+    // multiplying this, so what the albedo carries is only how far the grain
+    // darkens it. Grayscale, like BrickWall.png, for the same reason.
+    //
+    // `contrast` is how much of the grain is pigment rather than relief, and it
+    // is the dial for the one thing the relief cannot do: **a face with no light
+    // on it has no relief.** The scene's single light stands head-on and tilts
+    // down, so a block's two end faces (normal ±X) get essentially nothing, and
+    // at 0.10 they came back as flat ambient-blue panels while the front and top
+    // carried the full moulding — the two read as different materials from any
+    // oblique angle. Pigment does not need a light, so raising this is what puts
+    // the grain back on those faces.
+    //
+    // It is a trade rather than a free win, and the cost is the reason it was
+    // 0.10 to begin with: pigment multiplies the tint, so it eats the range a
+    // dark block has left to be dark with, and it is *added* to the relief on
+    // the faces that are lit rather than swapped for it. 0.30 is where the end
+    // faces stop reading as blank without the lit faces reading as painted;
+    // `normalStrength` is deliberately left alone, since the moulding on the
+    // front face is what the surface is judged on and it was already right.
     static void WriteGrainAlbedo(string path, float[] height, int size)
     {
-        const float contrast = 0.10f;
+        const float contrast = 0.30f;
         var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
         for (int y = 0; y < size; y++)
         {
@@ -3394,18 +3803,35 @@ public static class ArkanoidSetup
     // grain comes out combed into stripes there. No tiling value can fix that,
     // because the fault is that one number is being asked to serve faces of two
     // different sizes.
+    //
+    // The box is chamfered rather than square-edged (BlockBevel): six cut-back
+    // faces, twelve bevel strips and eight corner triangles, 96 vertices where
+    // the plain box had 24. That is cosmetic only and deliberately so — the
+    // BoxCollider2D is left on the square outline, so the ball reflects off the
+    // shape the block used to be and a bevel can be retuned without retuning
+    // the game.
     static Mesh BuildWorldUvBoxMesh(string name, Vector3 size)
     {
         var mesh = new Mesh { name = name };
         var vertices = new List<Vector3>();
         var uvs = new List<Vector2>();
         var triangles = new List<int>();
-
-        // The six outward normals, each paired with one in-plane axis; the other
-        // is `Cross(normal, u)`, which is what keeps all six windings right
-        // without six hand-checked sign conventions. That cross makes
-        // `u x v == normal`, so with the corner order below every face comes out
-        // clockwise as seen from outside it, which is Unity's front face.
+        // Which of the six faces each vertex takes its normal from. This is what
+        // makes the bevel a rounded edge rather than a facet of its own: a
+        // strip's two vertices along one face are given *that face's* normal and
+        // its other two the neighbour's, so the shading grades across the
+        // chamfer instead of holding one value across it.
+        //
+        // Flat-shading it was the first version and it is wrong here, for a
+        // reason that is about this surface rather than about bevels. A chamfer
+        // 0.03 wide is far too narrow to carry any grain, so its specular stays
+        // coherent where the face's is broken up by the normal map — and a
+        // uniform sheen 6 px wide running the length of every edge does not read
+        // as an edge, it reads as a drawn border around the block. Measured on a
+        // light block: the band's saturation was 5 against the face's 12, and it
+        // sat 10% off the face's value. Interpolated normals have no such band,
+        // because there is no step to hold.
+        var normalSource = new List<int>();
         var faces = new[]
         {
             (Normal: Vector3.back, U: Vector3.right),
@@ -3416,39 +3842,219 @@ public static class ArkanoidSetup
             (Normal: Vector3.down, U: Vector3.right),
         };
 
-        foreach (var (normal, u) in faces)
+        // The half-extent each face is left with once the bevel has cut it back.
+        // The geometry is a unit cube and the prefab's scale is not uniform, so
+        // a chamfer of a fixed width in *local* units would come out three
+        // different widths in the world: on a block scaled (1.5, 0.5, 0.6) the
+        // same number is three times wider down the height than across the
+        // width. Dividing the world bevel by the world size per axis is what
+        // makes it one constant width all the way round, which is the only kind
+        // a single light can read consistently.
+        var inset = new Vector3(
+            0.5f - BlockBevel / size.x,
+            0.5f - BlockBevel / size.y,
+            0.5f - BlockBevel / size.z);
+
+        // World units per local unit along an axis-aligned direction, and the
+        // bevelled half-extent along it. Both take the magnitude, so a negative
+        // axis (Vector3.left, Vector3.back) answers the same as its positive.
+        float WorldPer(Vector3 axis) => Vector3.Scale(axis, size).magnitude;
+        float InsetAlong(Vector3 axis) => Vector3.Scale(axis, inset).magnitude;
+
+        // A face's UV is its world position along the face's two in-plane axes,
+        // which is the whole point of this mesh: a UV unit is a world unit on
+        // all six faces. The bevel strips and corners borrow the frame of one of
+        // the faces they touch rather than being unwrapped in their own right —
+        // they are one bevel wide, so the UV seam that leaves along the strip's
+        // far side is 0.03 of a world unit across and no grain at this scale
+        // reads it.
+        Vector2 FaceUv(Vector3 point, Vector3 u, Vector3 v) => new Vector2(
+            Vector3.Dot(point, u) * WorldPer(u),
+            Vector3.Dot(point, v) * WorldPer(v));
+
+        Vector2[] RingUvs(Vector3[] ring, Vector3 u, Vector3 v)
         {
-            var v = Vector3.Cross(normal, u);
-            int start = vertices.Count;
-            // How far the face reaches along each of its own axes once the
-            // prefab's scale is on: the UV, and nothing else, is measured in it.
-            float uExtent = Vector3.Scale(u, size).magnitude;
-            float vExtent = Vector3.Scale(v, size).magnitude;
-
-            for (int corner = 0; corner < 4; corner++)
-            {
-                float du = corner == 1 || corner == 2 ? 0.5f : -0.5f;
-                float dv = corner >= 2 ? 0.5f : -0.5f;
-                vertices.Add(normal * 0.5f + u * du + v * dv);
-                uvs.Add(new Vector2(du * uExtent, dv * vExtent));
-            }
-
-            // The corner walk above already goes clockwise seen from outside the
-            // face — `v` is `Cross(normal, u)`, so `u x v == normal` — and
-            // clockwise-from-outside is Unity's front face. So the two triangles
-            // are taken in that order and not reversed. Reversing them was the
-            // first version of this and it turned every block inside out: with
-            // back-face culling the near face is the one thrown away, so what is
-            // drawn is the far face and the inside of the box, which reads as a
-            // stepped, hollow, plainly corrupt shape rather than as a brick.
-            triangles.Add(start); triangles.Add(start + 1); triangles.Add(start + 2);
-            triangles.Add(start); triangles.Add(start + 2); triangles.Add(start + 3);
+            var result = new Vector2[ring.Length];
+            for (int i = 0; i < ring.Length; i++) result[i] = FaceUv(ring[i], u, v);
+            return result;
         }
+
+        // Appends a convex ring as a triangle fan, wound so that it faces the
+        // way `outward` points. The winding is *measured* here rather than
+        // reasoned out per polygon, because this builder now emits six faces,
+        // twelve bevel strips and eight corner triangles, and a box wound the
+        // wrong way round is not a subtle fault: with back-face culling the near
+        // face is the one thrown away, so what is drawn is the far face and the
+        // inside of the box, which reads as a stepped, hollow, plainly corrupt
+        // shape rather than as a brick. Clockwise seen from outside is Unity's
+        // front face, and for the corner order below that is the winding whose
+        // `(b - a) x (c - a)` points along the outward normal.
+        void AddPolygon(Vector3[] ring, Vector2[] ringUvs, int[] ringSources, Vector3 outward)
+        {
+            var facing = Vector3.Cross(ring[1] - ring[0], ring[2] - ring[0]);
+            bool flip = Vector3.Dot(facing, outward) < 0f;
+            int start = vertices.Count;
+            for (int i = 0; i < ring.Length; i++)
+            {
+                int source = flip ? ring.Length - 1 - i : i;
+                vertices.Add(ring[source]);
+                uvs.Add(ringUvs[source]);
+                normalSource.Add(ringSources[source]);
+            }
+            for (int i = 1; i < ring.Length - 1; i++)
+            {
+                triangles.Add(start);
+                triangles.Add(start + i);
+                triangles.Add(start + i + 1);
+            }
+        }
+
+        // The six faces, each cut back by the bevel on all four sides. They are
+        // emitted first and in order, so face f owns vertices 4f..4f+3 — which
+        // is what lets the normals below be read straight off them.
+        for (int f = 0; f < faces.Length; f++)
+        {
+            var (normal, u) = faces[f];
+            var v = Vector3.Cross(normal, u);
+            float su = InsetAlong(u), sv = InsetAlong(v);
+            var ring = new[]
+            {
+                normal * 0.5f - u * su - v * sv,
+                normal * 0.5f + u * su - v * sv,
+                normal * 0.5f + u * su + v * sv,
+                normal * 0.5f - u * su + v * sv,
+            };
+            AddPolygon(ring, RingUvs(ring, u, v), new[] { f, f, f, f }, normal);
+        }
+
+        // The twelve bevel strips, one per pair of faces that meet: the quad
+        // spanning from where one face now stops to where the other one does.
+        // Pairs are walked rather than edges enumerated, so the twelve come out
+        // of the same six normals the faces did and there is no second table to
+        // keep in step. Opposite faces meet nowhere and are skipped.
+        for (int i = 0; i < faces.Length; i++)
+        {
+            for (int j = i + 1; j < faces.Length; j++)
+            {
+                var (aNormal, aU) = faces[i];
+                var (bNormal, _) = faces[j];
+                if (Mathf.Abs(Vector3.Dot(aNormal, bNormal)) > 0.5f) continue;
+
+                var along = Vector3.Cross(aNormal, bNormal);
+                float half = InsetAlong(along);
+                var aEdge = aNormal * 0.5f + bNormal * InsetAlong(bNormal);
+                var bEdge = bNormal * 0.5f + aNormal * InsetAlong(aNormal);
+                var ring = new[]
+                {
+                    aEdge - along * half,
+                    aEdge + along * half,
+                    bEdge + along * half,
+                    bEdge - along * half,
+                };
+                // The first two sit against face i and the last two against
+                // face j, so the strip interpolates from one face's normal to
+                // the other's — a rounded edge, continuous with both.
+                AddPolygon(ring, RingUvs(ring, aU, Vector3.Cross(aNormal, aU)),
+                    new[] { i, i, j, j }, aNormal + bNormal);
+            }
+        }
+
+        // The eight corner triangles, closing the three strips that meet there.
+        // Each vertex is the corner pulled in on two axes and left full on the
+        // third, which is the same point the face and both strips already put
+        // there.
+        for (int corner = 0; corner < 8; corner++)
+        {
+            var sign = new Vector3(
+                (corner & 1) == 0 ? -1f : 1f,
+                (corner & 2) == 0 ? -1f : 1f,
+                (corner & 4) == 0 ? -1f : 1f);
+            var ring = new[]
+            {
+                new Vector3(sign.x * 0.5f, sign.y * inset.y, sign.z * inset.z),
+                new Vector3(sign.x * inset.x, sign.y * 0.5f, sign.z * inset.z),
+                new Vector3(sign.x * inset.x, sign.y * inset.y, sign.z * 0.5f),
+            };
+            // Each corner vertex is full along one axis and drawn in on the
+            // other two, so it belongs to the face of that axis — the indices
+            // are the faces table's own order.
+            var sources = new[]
+            {
+                sign.x > 0f ? 2 : 3,
+                sign.y > 0f ? 4 : 5,
+                sign.z > 0f ? 1 : 0,
+            };
+            AddPolygon(ring, RingUvs(ring, Vector3.right, Vector3.up), sources, sign);
+        }
+
+        // The draft, applied last: every vertex's X is drawn in by an amount
+        // that grows linearly from nothing at the front face (z = -0.5, the side
+        // facing the player) to the full BlockDraft at the back. Done here
+        // rather than in each polygon's own corner arithmetic because it is one
+        // rule about the whole solid, and doing it once cannot get out of step
+        // between the faces, the strips and the corners.
+        //
+        // The UVs are deliberately left on the untapered projection. A world-UV
+        // mesh maps a UV unit to a world unit, and after the taper the back is
+        // narrower than the front — so there is no single mapping that is true
+        // of both. Keeping the front's is the right choice: the front face is
+        // the one a player looks at, and the alternative compresses the grain
+        // across the ends instead, which is the face that just got fixed.
+        // Measured against the *normal* block's width, not this mesh's own, so
+        // every box block tapers by the same proportion rather than by the same
+        // number of world units. A fixed 0.2 per side is a quarter of the full
+        // slab's half-width and over half of the half-brick's: the half-brick
+        // came out at 41% of its front width at the back where the slab was at
+        // 73%, which is a wedge rather than a brick — and on the translucent
+        // materials, where the far side of the block is visible through the near
+        // one, it read as plainly broken. The taper is a look, and a look wants
+        // to be the same proportion on both shapes.
+        float draft = 2f * BlockDraft / BrickWidth;
+        for (int i = 0; i < vertices.Count; i++)
+        {
+            var vertex = vertices[i];
+            vertex.x *= 1f - draft * (vertex.z + 0.5f);
+            vertices[i] = vertex;
+        }
+
+        // Normals are assigned rather than recalculated. Each of the six faces
+        // is planar even after the taper — the front and back keep a constant z,
+        // the top and bottom a constant y, and the two ends are a straight line
+        // in XZ extruded along Y — so a face's normal can be read off its own
+        // first triangle, which the emission order above guarantees is at 4f.
+        // Taking them post-taper is what matters: the ends are no longer
+        // (+/-1, 0, 0) and assuming they were would light them as though they
+        // had never been drafted.
+        var faceNormals = new Vector3[faces.Length];
+        for (int f = 0; f < faces.Length; f++)
+        {
+            var a = vertices[4 * f];
+            faceNormals[f] = Vector3.Cross(vertices[4 * f + 1] - a, vertices[4 * f + 2] - a).normalized;
+        }
+        // And then every one of them except the true back is given the *front*
+        // face's normal, which is what stops the edge reading as a border.
+        //
+        // A border and an edge are the same phenomenon: the bevel and the
+        // drafted end are angled away from the face, so they catch a different
+        // amount of light, and that difference is the band around the block.
+        // Recolouring it, narrowing it and neutralising it were each tried and
+        // each left a band — because a surface that shades differently from the
+        // face *is* a band, whatever colour it is. The only way to have a
+        // softened silhouette with no band at all is for the edge geometry to
+        // shade as though it were the face.
+        //
+        // So the geometry still rounds the outline and the collider is still
+        // untouched, but nothing around the edge is lit as its own surface. The
+        // back keeps its own normal because it is a real face, and it is culled
+        // from every view this game has anyway.
+        var normals = new List<Vector3>(vertices.Count);
+        foreach (var source in normalSource)
+            normals.Add(faceNormals[source == 1 ? 1 : 0]);
 
         mesh.SetVertices(vertices);
         mesh.SetUVs(0, uvs);
         mesh.SetTriangles(triangles, 0);
-        mesh.RecalculateNormals();
+        mesh.SetNormals(normals);
         mesh.RecalculateBounds();
         return mesh;
     }
@@ -4150,6 +4756,35 @@ public static class ArkanoidSetup
     {
         foreach (var root in SceneManager.GetActiveScene().GetRootGameObjects())
             if (root.name == name) return root;
+        return null;
+    }
+
+    // The one light stages 32, 34 and 46 are about: the shadow-casting key
+    // light, which is the only one whose *direction* those stages have an
+    // opinion about.
+    //
+    // This used to be a plain `FindAnyObjectByType<Light>`, and stage 101's two
+    // fills broke it the moment they were added — in exactly the way this
+    // project's notes on save gates warn about, and worth keeping as the
+    // worked example. A fill lies flat, so its `forward.x` is 1, so stage 34's
+    // guard ("is the key light yawed off centre?") was true of it; stage 34 then
+    // re-aimed a *fill* to the key light's pitch, stage 101 aimed it back on the
+    // next reload, and the two sat there undoing each other. And because every
+    // stage returns, a gate that is permanently true means **every stage after
+    // it never runs again** — the presenting symptom is not "the light keeps
+    // moving" but "the stage I just added stopped firing".
+    //
+    // Excluding the fills by name is what makes the older guards mean what they
+    // have always been written to mean. The alternative — teaching each of those
+    // three guards to skip horizontal lights — would spread the same fact across
+    // three places and still be wrong for the next light anyone adds.
+    static Light MainSceneLight()
+    {
+        foreach (var light in Object.FindObjectsByType<Light>(FindObjectsInactive.Include))
+        {
+            if (light.name == "FillLeft" || light.name == "FillRight") continue;
+            return light;
+        }
         return null;
     }
 
