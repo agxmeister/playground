@@ -491,7 +491,31 @@ public static class ArkanoidSetup
     // backdrop), not onto a floor, so the shadow's offset from the object is
     // gap x tan(pitch) — a steeper, "higher" light smears the shadow further
     // down, and a shallower one tucks it back in behind the object.
-    const float LightPitch = 30f;
+    //
+    // 50 to begin with, then 30, now 12, and the direction of travel is the
+    // point: every time this has been looked at with fresh eyes the answer has
+    // been "less". At 30 a screen full of blocks reads as a screen full of hard
+    // black rectangles — each shadow is a second copy of its block, offset far
+    // enough to be seen as its own shape rather than as the block's. tan(12) is
+    // about a fifth of tan(30), so the drop is now a fifth of what it was: it
+    // reads as the block standing off the wall, which is all the shadow was ever
+    // being asked to say.
+    //
+    // Chosen on the bench (see "Aiming the key light" in CLAUDE.md) rather than
+    // reasoned to, and it travels with `KeyShadowStrength` below — the pair was
+    // settled together and neither number means much without the other.
+    const float LightPitch = 12f;
+
+    // How dark the key light draws its shadows. Full black was never chosen; it
+    // is simply what a Unity light does, and against this scene's dark backdrop
+    // a full-strength shadow is the blackest thing on the screen — darker than
+    // any block, so the eye is caught by the shadow before the object.
+    //
+    // 0.7 keeps it clearly a shadow while letting the murk go on showing through
+    // it, which is the same argument `SoftShadows.Darkness` is written to. It
+    // does not move the shadow: `LightPitch` says where it falls, this says how
+    // heavily it lands, and the two were settled together on the bench.
+    const float KeyShadowStrength = 0.7f;
     // Two fill lights stand either side of the rooms, aimed dead horizontally,
     // and they exist for one face: a block's ends. The main light points along
     // +Z and tilts down, so for a face whose normal is +/-X the dot product is
@@ -1312,16 +1336,25 @@ public static class ArkanoidSetup
             return;
         }
 
-        // Stage 46: shrink the shadows by flattening the light's tilt from the
-        // 50 degrees stage 34 set to LightPitch. See LightPitch: the shadow
-        // lands on the surface behind the object, so less tilt means a tighter
-        // shadow — most visibly the ARKANOID title's, which was dropping two
-        // fifths of a letter-height below the word.
-        if (sceneLight != null && sceneLight.transform.eulerAngles.x > LightPitch + 1f)
+        // Stage 46: aim the key light at LightPitch. Written to flatten the 50
+        // degrees stage 34 set, and since made a **standing repair**, which is
+        // what makes LightPitch a live dial: it re-aims a light that does not
+        // match the constant instead of only pulling down one that is steeper
+        // than it. The old one-sided guard (`> LightPitch + 1`) would have
+        // silently ignored the constant ever being *raised*, and a guard that
+        // can only fail in one direction is the kind that reads as a passing
+        // check while doing nothing.
+        //
+        // It saves on its own tick now, the way stages 70, 76, 85, 87, 95 and
+        // 101 do, because the rotation is an in-memory fact and needs no disk
+        // gate to be sure of. Stage 47 below still carries the gate for the
+        // original 50-degree scene, which is a different question.
+        if (sceneLight != null && Mathf.Abs(Mathf.DeltaAngle(sceneLight.transform.eulerAngles.x, LightPitch)) > 0.1f)
         {
             sceneLight.transform.rotation = Quaternion.Euler(LightPitch, 0f, 0f);
             EditorSceneManager.MarkSceneDirty(scene);
-            Debug.Log("[ArkanoidSetup] Stage 46: flattened the light's tilt (scene left dirty).");
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log($"[ArkanoidSetup] Stage 46: aimed the light at {LightPitch} degrees and queued a scene save.");
             return;
         }
 
@@ -2478,6 +2511,26 @@ public static class ArkanoidSetup
         {
             EditorApplication.update += SaveSceneOnce;
             Debug.Log("[ArkanoidSetup] Stage 102: queued scene save for the next editor tick.");
+            return;
+        }
+
+        // Stage 104: how dark the key light's shadows are drawn (see
+        // KeyShadowStrength). A standing repair on an in-memory fact — a light
+        // is as strong as it is — so it saves on its own tick and carries no
+        // disk gate, per the rule that a stage which saves only when it has just
+        // changed something cannot loop by construction.
+        //
+        // Separate from stage 46 rather than folded into it, though the two
+        // numbers were chosen together: they are independent facts about the
+        // light, and a stage that wrote both would re-aim a light whose pitch
+        // was fine because its strength had drifted, or the other way about.
+        var strengthLight = MainSceneLight();
+        if (strengthLight != null && Mathf.Abs(strengthLight.shadowStrength - KeyShadowStrength) > 0.001f)
+        {
+            strengthLight.shadowStrength = KeyShadowStrength;
+            EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+            EditorApplication.update += SaveSceneOnce;
+            Debug.Log($"[ArkanoidSetup] Stage 104: set the key light's shadow strength to {KeyShadowStrength} and queued a scene save.");
             return;
         }
     }

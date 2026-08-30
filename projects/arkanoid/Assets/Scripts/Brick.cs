@@ -140,6 +140,9 @@ public class Brick : MonoBehaviour
         return false;
     }
 
+    // How hard a block going off flares the perimeter. See `Break`.
+    const float BreakFlash = 0.6f;
+
     // The block comes apart, however it was reached: by the ball wearing it
     // down, or by a neighbour going off next to it. A blast ignores hardness
     // entirely — a Neutronium slab beside antimatter simply goes — because a
@@ -157,6 +160,12 @@ public class Brick : MonoBehaviour
         Debris.Spawn(transform.position, renderer.bounds.size,
             body != null ? body.GetColor("_BaseColor") : Color.white, body,
             1f, GameManager.Instance != null ? GameManager.Instance.Catcher : null);
+        // The room takes note of it. Gentler than a border hit, and for a
+        // reason rather than for taste: a brick goes off out in the middle of
+        // the field, so its flare reaches the lamps at a share of its strength
+        // already, and a full-force one would make breaking a block near an
+        // edge louder than the ball hitting that edge.
+        RimLights.Flash(transform.position, BreakFlash);
         if (GameManager.Instance != null) GameManager.Instance.OnBrickDestroyed(this);
 
         // After the score and before the object goes: a chained block calls

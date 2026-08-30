@@ -72,6 +72,27 @@ public class TestBench : MonoBehaviour
     // the one moving thing on it would be a bench that stops answering.
     const float BallReturnHeight = 3.5f;
 
+    // How much one press moves each of the three lighting dials (see "The
+    // lighting can be tried on the bench" in CLAUDE.md). Coarse on purpose: the
+    // bench is for telling one answer from another, and a step so fine that two
+    // presses look identical makes the comparison harder rather than finer.
+    const float ShadowStep = 0.1f;
+    const float PitchStep = 5f;
+    const float RimStep = 2f;
+
+    // How fast the arrows swing the key light while it is being aimed, in
+    // degrees a second. Continuous rather than a step per press because aiming a
+    // light is a thing done by eye: the shadow slides across the backdrop and is
+    // stopped where it looks right, which is a different act from stepping a
+    // number and looking at the result.
+    const float AimRate = 45f;
+
+    // How far off head-on the light may be swung. Not a taste limit: at 90 the
+    // light is exactly edge-on to every block's front face — the face the camera
+    // sees — and the whole screen goes black, which is a hole to fall into
+    // rather than a setting to try.
+    const float YawLimit = 80f;
+
     int shape;
     int material = (int)BlockMaterial.Polymer;
     int count = 12;
@@ -92,16 +113,109 @@ public class TestBench : MonoBehaviour
     // frame exactly as it does in a round rather than sailing out of view.
     Vector2Int fittedTo;
 
+    // The room's own ring of perimeter lamps, stood up and fitted exactly as
+    // `Playfield` stands up its own. Without one the bench would be lighting
+    // blocks by the key light alone and quietly showing them under lighting no
+    // round has — which is the one thing a bench for looking at blocks must not
+    // do — and the rim dial below would have nothing to move.
+    RimLights rim;
+
+    // The drawn alternative to the key light's shadows, which 7 switches to.
+    SoftShadows soft;
+
+    // The key light, and what it was set to when the bench opened. The dials
+    // below move a light that belongs to the whole game, so what they move has
+    // to be put back: see OnDisable.
+    Light keyLight;
+    float authoredShadowStrength;
+    float authoredPitch;
+    float authoredYaw;
+    float authoredRim;
+
+    // Where the key light is pointed, kept here as two numbers rather than read
+    // back off the transform each time. Euler angles do not survive the round
+    // trip cleanly — a pitch stepped down and back up returns a rounding error
+    // away from where it started, and a negative yaw comes back as 300-odd — so
+    // the bench keeps what it meant and writes it, instead of asking the
+    // transform what it thinks it was told.
+    float pitch;
+    float yaw;
+
+    // True while the arrows are aiming the light instead of driving the paddle.
+    // Latched by L; SHIFT does the same thing for as long as it is held.
+    bool aiming;
+    LightShadows authoredShadowType;
+    ShadowMode authoredShadowMode;
+
     public bool IsOpen => gameObject.activeSelf;
 
     void OnEnable()
     {
+        // Read before anything is touched, so the numbers put back on the way
+        // out are the ones the game was standing in when the bench opened rather
+        // than whatever this file happens to believe they are.
+        keyLight = FindKeyLight();
+        if (keyLight != null)
+        {
+            authoredShadowStrength = keyLight.shadowStrength;
+            authoredPitch = Wrapped(keyLight.transform.eulerAngles.x);
+            authoredYaw = Wrapped(keyLight.transform.eulerAngles.y);
+            pitch = authoredPitch;
+            yaw = authoredYaw;
+            // The kind of shadow the key light casts, so that switching to the
+            // soft mode and back puts hard or soft shadows back as they were
+            // rather than as this file guessed they were.
+            authoredShadowType = keyLight.shadows;
+        }
+        authoredRim = RimLights.RestLevel;
+        authoredShadowMode = SoftShadows.Mode;
+
         FitToFrame();
         Rebuild();
     }
 
+    // The shadow-casting directional light, and *not* simply the first `Light`
+    // in the scene. There are three standing: the key light and the two
+    // horizontal fills, and a search that took the first one it found would as
+    // happily hand back a fill — which is the exact mistake `ArkanoidSetup` made
+    // once and left a note about, where a stage re-aimed a fill on every reload.
+    // Casting shadows is the thing that makes the key light the key light, so
+    // that is what this asks about, and it stays true if the fills are ever
+    // renamed. The rim's own eight lamps are points and cast nothing, so they
+    // cannot be picked up here either.
+    static Light FindKeyLight()
+    {
+        foreach (var light in FindObjectsByType<Light>(FindObjectsInactive.Exclude))
+            if (light.type == LightType.Directional && light.shadows != LightShadows.None) return light;
+        return null;
+    }
+
+    // Everything the dials moved, put back. The bench's whole contract is that
+    // it cannot affect a round, and these three are the only things it touches
+    // that outlive the room: the key light is scene content shared with both
+    // other rooms, and `RimLights.RestLevel` is a static. A setting worth keeping
+    // is kept by editing the constant it came from, not by leaving it standing
+    // here — the readout prints the numbers so they can be written down.
+    void RestoreLighting()
+    {
+        aiming = false;
+        if (paddle != null) paddle.enabled = true;
+        if (keyLight != null)
+        {
+            keyLight.shadowStrength = authoredShadowStrength;
+            pitch = authoredPitch;
+            yaw = authoredYaw;
+            Aim();
+        }
+        RimLights.SetRestLevel(authoredRim);
+        SoftShadows.SetMode(authoredShadowMode, keyLight, authoredShadowType);
+        if (keyLight != null) keyLight.shadows = authoredShadowType;
+    }
+
     void OnDisable()
     {
+        RestoreLighting();
+
         // Nothing of the bench outlives it: rubble and sparks are unparented
         // roots that would otherwise rain over whatever screen comes next, the
         // same reason MainMenuPanel.Hide sweeps them.
@@ -177,11 +291,132 @@ public class TestBench : MonoBehaviour
         if (keyboard.qKey.wasPressedThisFrame && GameManager.Instance != null)
             GameManager.Instance.CloseBench();
 
+        ReadLightingKeys(keyboard);
+
         // A ball the room has lost is put back rather than left gone, since the
         // bench's one moving part going missing would make it stop answering.
         if (ball != null && !waitingToServe
             && ball.transform.position.y < transform.position.y - 8f) ServeBall();
     }
+
+    // The three lighting dials, on digits rather than letters. Every letter pair
+    // on this bench is already spoken for by the bench or by the paddle standing
+    // in it, and two of the obvious spare ones are worse than spare: Y answers
+    // the exit prompt and H is a letter of the BENCH code. The digits are used
+    // by nothing that can be open at the same time as this room.
+    //
+    // What each one is for is in "The edge of the frame is lit" and "How could
+    // there still be a shadow" in CLAUDE.md; in short, 1/2 greys the shadow out
+    // where it stands, 3/4 moves where it falls, and 5/6 lifts the whole
+    // backdrop around it. They are three different answers to one complaint and
+    // the point of putting them here is that they can be told apart.
+    void ReadLightingKeys(Keyboard keyboard)
+    {
+        // How dark the key light's shadow is drawn, without moving it. The
+        // gentlest of the three: at 0 the shadows are gone and nothing else
+        // about the picture has changed.
+        if (keyboard.digit1Key.wasPressedThisFrame) StepShadowStrength(-ShadowStep);
+        if (keyboard.digit2Key.wasPressedThisFrame) StepShadowStrength(ShadowStep);
+
+        // The key light's downward tilt — `ArkanoidSetup.LightPitch`, 30 as
+        // authored. Everything here casts onto a surface *behind* it rather than
+        // onto a floor, so the shadow's drop is `gap x tan(pitch)`: shallower
+        // tucks it back in behind the block, steeper smears it further down.
+        if (keyboard.digit3Key.wasPressedThisFrame) StepPitch(-PitchStep);
+        if (keyboard.digit4Key.wasPressedThisFrame) StepPitch(PitchStep);
+
+        // The rim's resting level. This one does not touch the shadow at all —
+        // it raises the light everywhere around it, the shadow included, so what
+        // it changes is how much the shadow stands out rather than how dark it
+        // is. Past about 15 it flattens the murk, which is worth seeing once.
+        if (keyboard.digit5Key.wasPressedThisFrame) RimLights.SetRestLevel(RimLights.RestLevel - RimStep);
+        if (keyboard.digit6Key.wasPressedThisFrame) RimLights.SetRestLevel(RimLights.RestLevel + RimStep);
+
+        // The two kinds of shadow, which is a switch rather than a dial: the key
+        // light's own hard offset one, or a soft patch drawn squarely behind
+        // every object with no direction in it (see SoftShadows). They are
+        // mutually exclusive on purpose — both at once gives every block two
+        // shadows, which is neither of the things being compared.
+        if (keyboard.digit7Key.wasPressedThisFrame)
+            SoftShadows.SetMode(
+                SoftShadows.Mode == ShadowMode.Directional ? ShadowMode.Soft : ShadowMode.Directional,
+                keyLight, authoredShadowType);
+
+        ReadAiming(keyboard);
+
+        // Back to what the game is written to, so a picture can always be
+        // compared against the one everybody else is looking at.
+        if (keyboard.digit0Key.wasPressedThisFrame) RestoreLighting();
+    }
+
+    void StepShadowStrength(float by)
+    {
+        if (keyLight == null) return;
+        keyLight.shadowStrength = Mathf.Clamp01(keyLight.shadowStrength + by);
+    }
+
+    void StepPitch(float by)
+    {
+        // Kept the right way up: a pitch past vertical would put the key light
+        // under the room and turn every shadow upside down, which is a different
+        // question from the one being asked here.
+        pitch = Mathf.Clamp(pitch + by, 0f, 85f);
+        Aim();
+    }
+
+    void Aim()
+    {
+        if (keyLight != null) keyLight.transform.rotation = Quaternion.Euler(pitch, yaw, 0f);
+    }
+
+    // Aiming the key light by hand, which is the one thing here that wants to be
+    // *swung* rather than stepped.
+    //
+    // Two ways in, and the second is not a duplicate. **SHIFT held** is what a
+    // hand wants: press it, swing the light, let go. But a held modifier cannot
+    // be driven from outside — `/input` plays one control at a time, so no
+    // script can ever hold SHIFT *and* press an arrow — and this bench already
+    // carries the scar from that lesson: `Q` exists because ESC is undeliverable.
+    // So **L latches** the same mode, and anything driving the bench uses that.
+    //
+    // The arrows move *the light*, not the shadow: UP lifts it, so the shadow it
+    // throws slides further down the backdrop, and RIGHT walks it to the right,
+    // so the shadow goes left. Aiming a lamp is the thing being pictured, and a
+    // control that moved the shadow directly would have the light going the
+    // wrong way whenever anybody thought about it.
+    void ReadAiming(Keyboard keyboard)
+    {
+        if (keyboard.lKey.wasPressedThisFrame) aiming = !aiming;
+        bool aim = aiming || keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
+
+        // The paddle reads the arrows too, and it can be standing right here.
+        // Switching it off for the duration is the whole of the arbitration —
+        // and it is the bench's own copy of the paddle, so nothing a round uses
+        // is touched. A paddle switched off mid-boost keeps its drive and coasts
+        // it off when it comes back, which is the same thing that happens to one
+        // whose keys are simply let go of.
+        if (paddle != null) paddle.enabled = !aim;
+        if (!aim || keyLight == null) return;
+
+        float step = AimRate * Time.deltaTime;
+        float liftedBy =
+            (keyboard.upArrowKey.isPressed ? 1f : 0f) - (keyboard.downArrowKey.isPressed ? 1f : 0f);
+        // Right arrow walks the light right, which is a *negative* yaw: a light
+        // yawed positively has its beam heading towards +X, which means it is
+        // standing on the left.
+        float walkedBy =
+            (keyboard.leftArrowKey.isPressed ? 1f : 0f) - (keyboard.rightArrowKey.isPressed ? 1f : 0f);
+        if (liftedBy == 0f && walkedBy == 0f) return;
+
+        pitch = Mathf.Clamp(pitch + liftedBy * step, 0f, 85f);
+        yaw = Mathf.Clamp(yaw + walkedBy * step, -YawLimit, YawLimit);
+        Aim();
+    }
+
+    // Euler angles come back as 0..360; this is the same angle written the way a
+    // person reads it, so a light swung a little to the right says -12 rather
+    // than 348.
+    static float Wrapped(float degrees) => degrees > 180f ? degrees - 360f : degrees;
 
     void Step(ref int value, int length, int by)
     {
@@ -322,6 +557,12 @@ public class TestBench : MonoBehaviour
         waitingToServe = false;
     }
 
+    // A star beside a dial that has been moved off the value the game is written
+    // to. Compared loosely, since a pitch stepped down and back up again lands a
+    // rounding error away from where it started and a bench that then insisted
+    // the light had been changed would be lying about the more important half.
+    static string Moved(float now, float authored) => Mathf.Abs(now - authored) > 0.001f ? "*" : "";
+
     void FitToFrame()
     {
         var camera = Camera.main;
@@ -332,6 +573,14 @@ public class TestBench : MonoBehaviour
         halfWidth = extents.x;
         Border.Fit(transform, new Vector2(transform.position.x, camera.transform.position.y),
             extents, planeZ);
+        // The ring, fitted to this room's frame the same way `Playfield` fits
+        // its own — and stood up here rather than authored for the same reason:
+        // a perimeter is only known once there is a window.
+        if (rim == null) rim = gameObject.AddComponent<RimLights>();
+        rim.FitTo(new Vector2(transform.position.x, camera.transform.position.y), extents, planeZ);
+        // And the room's own soft-shadow manager, dormant until 7 says otherwise.
+        if (soft == null) soft = gameObject.AddComponent<SoftShadows>();
+        soft.FitTo(planeZ);
         // A window resized under a standing paddle would otherwise leave its
         // travel measured against the frame it was born in.
         if (paddle != null) paddle.FitTo(halfWidth);
@@ -348,6 +597,8 @@ public class TestBench : MonoBehaviour
             ? shapePrefabs[shape].name : "none";
         string hardness = traits.Unbreakable
             ? "unbreakable" : $"x{traits.Multiplier}";
+
+        float shadowStrength = keyLight != null ? keyLight.shadowStrength : 0f;
 
         var style = new GUIStyle(GUI.skin.label)
         {
@@ -370,11 +621,32 @@ public class TestBench : MonoBehaviour
             // handed without this number. GameManager's exit prompt sets
             // timeScale to 0 and timeScale outlives the round that set it.
             + $"\ntimeScale {Time.timeScale:0.00}"
+            // The three lighting numbers, because the whole point of the dials
+            // is comparing one setting against another and a screenshot that
+            // does not say which setting it is showing cannot be compared with
+            // anything. A star marks a value moved off what the game is written
+            // to, so a picture never quietly claims to be the stock look.
+            + $"\nshadow {shadowStrength:0.00}{Moved(shadowStrength, authoredShadowStrength)}"
+            // One decimal, because these two are swung by hand at 45 degrees a
+            // second and land on fractions. Printed as whole degrees they can
+            // read `yaw 0*` — starred as moved, showing the value it was moved
+            // from — which is a readout arguing with itself.
+            + $"   pitch {pitch:0.0}{Moved(pitch, authoredPitch)}"
+            + $"   yaw {yaw:0.0}{Moved(yaw, authoredYaw)}"
+            + $"   rim {RimLights.RestLevel:0.0}{Moved(RimLights.RestLevel, RimLights.AuthoredRestLevel)}"
+            + $"\nshadows {(SoftShadows.Mode == ShadowMode.Directional ? "directional" : "soft, behind")}"
+            + (SoftShadows.Mode != ShadowMode.Directional ? "*" : "")
             + "\n\nZ/X material   C/V shape   N/M count"
             + "\nG damage   F rebuild   R re-roll"
-            + "\nB ball   P paddle   SPACE serve   Q/ESC menu";
+            + "\nB ball   P paddle   SPACE serve   Q/ESC menu"
+            + "\n1/2 shadow   3/4 pitch   5/6 rim   7 mode   0 reset"
+            // Said loudly while it is on, because a latched mode that has been
+            // forgotten about presents as a paddle that has stopped answering
+            // its keys — which reads as a bug and not as a mode.
+            + (aiming ? "\nAIMING (L off)   arrows swing the light"
+                      : "\nSHIFT+arrows or L: aim the light");
 
-        var box = new Rect(24f, 24f, 420f, 190f);
+        var box = new Rect(24f, 24f, 420f, 250f);
         GUI.Box(box, GUIContent.none);
         GUI.Label(new Rect(box.x + 12f, box.y + 10f, box.width - 24f, box.height - 20f), text, style);
     }

@@ -186,7 +186,12 @@ public class Paddle : MonoBehaviour
             // ring the room, as hard as the speed it was carrying over cruising
             // — which is the whole reason the drive is measured in cruising
             // speeds. Either way the speed is gone: what stopped it is a wall.
-            ViewShake.Shake(Mathf.InverseLerp(1f, BoostTopSpeed, Mathf.Abs(drive)));
+            float force = Mathf.InverseLerp(1f, BoostTopSpeed, Mathf.Abs(drive));
+            ViewShake.Shake(force);
+            // The same crash, seen rather than felt: the paddle hits the edge of
+            // the frame, which is where the lamps stand, so the corner it
+            // arrived in lights up as hard as it was thrown there.
+            RimLights.Flash(transform.position, force);
             drive = 0f;
         }
 

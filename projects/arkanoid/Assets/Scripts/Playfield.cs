@@ -44,11 +44,18 @@ public class Playfield : MonoBehaviour
     // leave the borders where the old one wanted them.
     Vector2Int fittedTo;
 
+    // The perimeter lights, added the first time the room is fitted.
+    RimLights rim;
+
+    // The drawn alternative to the key light's shadows, added alongside them.
+    SoftShadows soft;
+
     void OnEnable() => FitToFrame();
 
     void Update()
     {
         if (fittedTo.x != Screen.width || fittedTo.y != Screen.height) FitToFrame();
+
     }
 
     void FitToFrame()
@@ -94,6 +101,20 @@ public class Playfield : MonoBehaviour
                     2f * inFog.y + BackdropOverhang, 1f);
             }
         }
+
+        // The ring of lamps standing round the edge of the picture, fitted to
+        // the same frame for the same reason everything else here is: a
+        // perimeter is only known once there is a window. Stood up on demand
+        // rather than authored, so nothing about it reaches the scene file.
+        if (rim == null) rim = gameObject.AddComponent<RimLights>();
+        rim.FitTo(new Vector2(transform.position.x, camera.transform.position.y), extents, planeZ);
+
+        // The other kind of shadow, dormant unless the mode has been switched
+        // over (see SoftShadows). It costs a switched-off component while the
+        // room is using the key light's own shadows, which is always, until
+        // somebody on the bench says otherwise.
+        if (soft == null) soft = gameObject.AddComponent<SoftShadows>();
+        soft.FitTo(planeZ);
 
         if (paddle != null) paddle.FitTo(extents.x);
     }

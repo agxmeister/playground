@@ -100,7 +100,11 @@ public class Border : MonoBehaviour
 
         var renderer = ball.GetComponentInChildren<MeshRenderer>();
         var contact = collision.GetContact(0).point;
-        Ricochet.Spawn(new Vector3(contact.x, contact.y, ball.transform.position.z),
-            Outward, renderer != null ? renderer.sharedMaterial : null);
+        var where = new Vector3(contact.x, contact.y, ball.transform.position.z);
+        Ricochet.Spawn(where, Outward, renderer != null ? renderer.sharedMaterial : null);
+        // And the edge of the picture lights up where it was struck. A border
+        // hit is the one impact that happens *at* the perimeter, so it lands
+        // full force on the lamp it happened next to.
+        RimLights.Flash(where, 1f);
     }
 }
