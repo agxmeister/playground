@@ -409,6 +409,18 @@ Four things about it are load-bearing, and each was learned rather than designed
 
 `GameManager.BenchCode` reads the word on the menu only, where letters are otherwise unused — the arrows, SPACE and DOWN drive the paddle, ESC has nothing to leave, and name entry is a state of its own — so a word can be a door without taking a key away from anything. A wrong letter starts the word over, and the reset re-tests against position zero, since the wrong letter may be the first letter of a fresh attempt.
 
+### Designing a block on the bench
+
+**`T` stops the grid rolling and makes every block the same chosen look**, which is what turns the bench from a place to *see* variety into a place to *design* one. `J/K` walk the grain, `U/I` walk the point on the material's band in twentieths, `O` steps through the **named designs** and loads one into the dials — the readout then names it in brackets, and moving any dial drops the name, since a look one press off Chalk is not Chalk. The readout prints what is standing there — grain name, `t`, the resulting sRGB triple and the resulting smoothness — because those numbers are the entire product of a design session. A screenshot that shows a look somebody likes and does not say what produced it cannot become an entry in this file.
+
+Twelve of one look rather than one block is the point: a look is judged against its own neighbours and on every shape, and a grid of twelve rolls shows twelve looks no two of which can be compared. `TestBench.ReadDesignKeys` holds the three numbers, `BlockVariety.Compose` turns them into a `BlockLook`, and `Spawn` calls it instead of `Roll` while the mode is on.
+
+**`Compose` drops the hue jitter and keeps the random grain offset**, and both halves of that are deliberate. Jitter would put the look a per-channel percent away from itself every rebuild, so the printed numbers would not reproduce it — and reproducing it is the whole purpose. The offset is not part of a look at all, only which patch of a tiling repeat a face happens to show; pinning it would make twelve blocks show one patch twelve times and read as a tiling bug. `R` still means something in design mode for exactly that reason: it slides the same look around its tile.
+
+**A round calls `Compose` too, but only through a named design** (see "Three rolls worth naming"). What must not happen is gameplay reaching past the design table into `Compose` with numbers of its own: a look chosen anywhere but in that one table is a variant nobody can name, and the table is what keeps "which looks exist" answerable in a single place.
+
+**Two things about compiling while the bench is open**, both learned the hard way and neither a bug in this file. A domain reload wipes every `MaterialPropertyBlock`, so after a recompile the standing blocks fall back to the shared material and the whole grid goes flat and pale — press `F` and it comes back; it is not the design mode failing. And a reload taken *during* play mode can leave the game not receiving keys at all, which presents as a bench that has stopped answering; leaving play mode and re-entering it fixes that, and no amount of pressing the key again will.
+
 ### The lighting can be tried on the bench
 
 **Three dials, on the digit keys, for the three different answers to "that shadow is too strong".** They exist because those answers are not variations of one setting — they change different things, and the only honest way to choose between them is to look at them one after another on the same blocks:

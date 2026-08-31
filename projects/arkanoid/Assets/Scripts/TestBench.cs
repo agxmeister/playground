@@ -80,6 +80,12 @@ public class TestBench : MonoBehaviour
     const float PitchStep = 5f;
     const float RimStep = 2f;
 
+    // How far one press moves the design mode's point on the material's band.
+    // A twentieth, so the whole band is twenty presses end to end: fine enough
+    // that two neighbouring steps are worth telling apart, coarse enough that
+    // walking from near-white to near-black is not a chore.
+    const float DesignStep = 0.05f;
+
     // How fast the arrows swing the key light while it is being aimed, in
     // degrees a second. Continuous rather than a step per press because aiming a
     // light is a thing done by eye: the shadow slides across the backdrop and is
@@ -92,6 +98,18 @@ public class TestBench : MonoBehaviour
     // sees — and the whole screen goes black, which is a hole to fall into
     // rather than a setting to try.
     const float YawLimit = 80f;
+
+    // Design mode: the grid stops rolling and every block is the *same* chosen
+    // look, so a candidate can be walked one step at a time and photographed.
+    // Off by default, because the bench's ordinary job is showing what a round
+    // shows and a round rolls.
+    bool designing;
+    int designGrain;
+    float designT = 0.5f;
+    // Which named design is standing, or -1 while the dials have been moved off
+    // one. Kept so the readout can say "Chalk" instead of leaving whoever is
+    // looking to recognise a grain and a number as a name they already have.
+    int namedDesign = -1;
 
     int shape;
     int material = (int)BlockMaterial.Polymer;
@@ -272,6 +290,7 @@ public class TestBench : MonoBehaviour
         // undone — there is no un-break, and a rebuild is honest about that.
         if (keyboard.fKey.wasPressedThisFrame) Rebuild();
         if (keyboard.gKey.wasPressedThisFrame) Damage();
+        ReadDesignKeys(keyboard);
         if (keyboard.bKey.wasPressedThisFrame) ToggleBall();
         if (keyboard.pKey.wasPressedThisFrame) TogglePaddle();
         // The serve, exactly as a round's: the launch takes the press and the
@@ -297,6 +316,75 @@ public class TestBench : MonoBehaviour
         // bench's one moving part going missing would make it stop answering.
         if (ball != null && !waitingToServe
             && ball.transform.position.y < transform.position.y - 8f) ServeBall();
+    }
+
+    // Block design mode. T switches it on, J/K walk the grain and U/I walk the
+    // band; every block in the grid then wears the same chosen look, which is
+    // what makes a candidate judgeable — twelve blocks of one look show it on
+    // every shape and every neighbour, where twelve rolls show twelve looks and
+    // no two of them can be compared.
+    //
+    // Letters again rather than digits, and these four are genuinely free: the
+    // paddle takes the arrows, A/D, S and SPACE, the bench has Z/X/C/V/N/M/R/F/
+    // G/B/P/Q/L, the digits are the lighting dials, Y answers the exit prompt.
+    //
+    // The seed still matters in design mode even though nothing is rolled: the
+    // grain offset is still drawn per block (see BlockVariety.Compose), so R
+    // slides the same look around the tile, which is a real thing to want to
+    // see and not a leftover.
+    void ReadDesignKeys(Keyboard keyboard)
+    {
+        if (keyboard.tKey.wasPressedThisFrame) { designing = !designing; Rebuild(); }
+        if (!designing) return;
+
+        // O walks the named designs, which is how one is looked at rather than
+        // rebuilt from its numbers by hand. It loads the design's grain and
+        // value into the dials, so the next J or U carries on from where that
+        // design stands — a named look is a starting point as much as it is an
+        // answer.
+        if (keyboard.oKey.wasPressedThisFrame && BlockDesigns.Count > 0)
+        {
+            namedDesign = (namedDesign + 1) % BlockDesigns.Count;
+            var definition = BlockDesigns.Of((BlockDesign)namedDesign);
+            designGrain = definition.Grain;
+            designT = definition.Value;
+            Rebuild();
+        }
+
+        var variety = GameManager.Instance != null
+            ? GameManager.Instance.VarietyOf((BlockMaterial)material) : null;
+        int grains = variety != null ? variety.GrainCount : 0;
+        if (grains > 0)
+        {
+            if (keyboard.jKey.wasPressedThisFrame)
+            {
+                designGrain = (designGrain - 1 + grains) % grains;
+                namedDesign = -1;
+                Rebuild();
+            }
+            if (keyboard.kKey.wasPressedThisFrame)
+            {
+                designGrain = (designGrain + 1) % grains;
+                namedDesign = -1;
+                Rebuild();
+            }
+        }
+
+        // Clamped rather than wrapped: the ends of a band are places to sit and
+        // look, and a dial that jumped from near-black to near-white on one
+        // press past the end would throw away the thing being judged.
+        if (keyboard.uKey.wasPressedThisFrame)
+        {
+            designT = Mathf.Clamp01(designT - DesignStep);
+            namedDesign = -1;
+            Rebuild();
+        }
+        if (keyboard.iKey.wasPressedThisFrame)
+        {
+            designT = Mathf.Clamp01(designT + DesignStep);
+            namedDesign = -1;
+            Rebuild();
+        }
     }
 
     // The three lighting dials, on digits rather than letters. Every letter pair
@@ -460,7 +548,10 @@ public class TestBench : MonoBehaviour
         var block = Instantiate(shapePrefabs[shape], position, Quaternion.identity, blockHolder);
         block.SetMaterial(kind, game != null ? game.MaterialAsset(kind) : null);
         var variety = game != null ? game.VarietyOf(kind) : null;
-        if (variety != null) block.SetLook(variety.Roll(GameManager.GrainTilesPerUnit));
+        if (variety == null) return;
+        block.SetLook(designing
+            ? variety.Compose(designGrain, designT, GameManager.GrainTilesPerUnit)
+            : variety.Roll(GameManager.GrainTilesPerUnit));
     }
 
     // A quarter of every block's hardness at a time, applied through the same
@@ -563,6 +654,34 @@ public class TestBench : MonoBehaviour
     // the light had been changed would be lying about the more important half.
     static string Moved(float now, float authored) => Mathf.Abs(now - authored) > 0.001f ? "*" : "";
 
+    // What design mode is currently holding, printed in full — because the
+    // whole product of a design session is these numbers. A screenshot that
+    // shows a look somebody likes and does not say which grain and which point
+    // on the band produced it is a screenshot that cannot be turned into an
+    // entry in CLAUDE.md, which is the one thing this mode is for.
+    //
+    // The tint and the smoothness are printed *derived* rather than as the t
+    // alone, since they are what would actually be written down if the look is
+    // kept, and recomputing them by hand off a band's two ends is exactly the
+    // step where a transcription goes wrong.
+    string DesignLine(BlockMaterial kind)
+    {
+        if (!designing) return "";
+        var variety = GameManager.Instance != null ? GameManager.Instance.VarietyOf(kind) : null;
+        // A material with no variety wears its shared asset untouched, which is
+        // the ordinary case and not a failure — but design mode has nothing to
+        // pin there, and a line of zeroes would look like an answer.
+        if (variety == null) return $"\nDESIGN: {kind} has no variety to pin";
+
+        float t = designT;
+        var tint = Color.Lerp(variety.darkest, variety.lightest, t);
+        float smoothness = Mathf.Lerp(variety.darkSmoothness, variety.lightSmoothness, t);
+        return $"\nDESIGN  {variety.GrainName(designGrain)}   t {t:0.00}"
+            + (namedDesign >= 0 ? $"   [{BlockDesigns.NameOf((BlockDesign)namedDesign)}]" : "")
+            + $"   rgb {tint.r:0.000} {tint.g:0.000} {tint.b:0.000}"
+            + $"   smooth {smoothness:0.00}";
+    }
+
     void FitToFrame()
     {
         var camera = Camera.main;
@@ -606,6 +725,7 @@ public class TestBench : MonoBehaviour
             normal = { textColor = Color.white },
         };
         var text = $"TEST BENCH\n{shapeName}  |  {kind}  {hardness}"
+            + DesignLine(kind)
             + $"\ncount {count}   seed {seed}   damage {damageSteps} x {DamageStep:0.00}"
             + $"\nball {(ball != null ? "on" : "off")}   paddle {(paddle != null ? "on" : "off")}"
             // The paddle's own numbers, because the mechanics it carries are
@@ -637,7 +757,8 @@ public class TestBench : MonoBehaviour
             + $"\nshadows {(SoftShadows.Mode == ShadowMode.Directional ? "directional" : "soft, behind")}"
             + (SoftShadows.Mode != ShadowMode.Directional ? "*" : "")
             + "\n\nZ/X material   C/V shape   N/M count"
-            + "\nG damage   F rebuild   R re-roll"
+            + "\nG damage   F rebuild   R re-roll   T design"
+            + (designing ? "   J/K grain   U/I value   O named" : "")
             + "\nB ball   P paddle   SPACE serve   Q/ESC menu"
             + "\n1/2 shadow   3/4 pitch   5/6 rim   7 mode   0 reset"
             // Said loudly while it is on, because a latched mode that has been
@@ -646,7 +767,10 @@ public class TestBench : MonoBehaviour
             + (aiming ? "\nAIMING (L off)   arrows swing the light"
                       : "\nSHIFT+arrows or L: aim the light");
 
-        var box = new Rect(24f, 24f, 420f, 250f);
+        // A line taller while design mode is printing its numbers, since a
+        // readout clipped by its own box is a readout that loses exactly the
+        // digits the mode exists to hand over.
+        var box = new Rect(24f, 24f, 420f, designing ? 272f : 250f);
         GUI.Box(box, GUIContent.none);
         GUI.Label(new Rect(box.x + 12f, box.y + 10f, box.width - 24f, box.height - 20f), text, style);
     }
