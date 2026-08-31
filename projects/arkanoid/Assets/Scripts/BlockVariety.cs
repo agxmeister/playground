@@ -92,6 +92,43 @@ public class BlockVariety
             new Vector2(Random.value, Random.value),
             grainTilesPerUnit);
     }
+
+    // How many grains this material was given, and what the one at an index is
+    // called, so a bench can walk them and a readout can name the one on screen.
+    // The name is the texture asset's — "PolymerStipple" — because that is the
+    // name the file has and the one anybody would grep for; a second, prettier
+    // table of names here would be a thing to keep in step for no gain.
+    public int GrainCount => grains != null ? grains.Length : 0;
+
+    public string GrainName(int index) =>
+        grains != null && index >= 0 && index < grains.Length && grains[index] != null
+            ? grains[index].name : "none";
+
+    // One casting *chosen* rather than rolled: the same grain and the same point
+    // on the band every time, which is what makes a look worth writing down.
+    // This is the bench's design mode and nothing in a round calls it — a round
+    // wants the die, and a variety that could be pinned from gameplay would be a
+    // fixed set of variants wearing the die's clothes.
+    //
+    // Two deliberate differences from Roll. **No hue jitter**, because a look
+    // that came out a per-channel percent away from itself each time could not
+    // be reproduced from the numbers the readout prints, and reproducing it is
+    // the entire point. **The grain offset is still random**, because it is the
+    // one part of a roll that is not part of the look: it slides the same
+    // picture sideways, and pinning it would make a grid of twelve blocks show
+    // one patch of grain twelve times over and read as a tiling bug.
+    public BlockLook Compose(int grainIndex, float t, float grainTilesPerUnit)
+    {
+        t = Mathf.Clamp01(t);
+        int index = GrainCount > 0 ? Mathf.Clamp(grainIndex, 0, grains.Length - 1) : -1;
+        return new BlockLook(
+            index >= 0 ? grains[index] : null,
+            grainNormals != null && index >= 0 && index < grainNormals.Length ? grainNormals[index] : null,
+            Color.Lerp(darkest, lightest, t),
+            Mathf.Lerp(darkSmoothness, lightSmoothness, t),
+            new Vector2(Random.value, Random.value),
+            grainTilesPerUnit);
+    }
 }
 
 // What one block ended up looking like. A struct passed straight to the renderer
