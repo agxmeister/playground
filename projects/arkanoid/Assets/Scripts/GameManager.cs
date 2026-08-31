@@ -329,18 +329,42 @@ public class GameManager : MonoBehaviour
             for (int column = 0; column < columnCount; column++)
             {
                 var slot = new Vector3(x0 + column * (width + gap), y0 - row * (height + gap), 0f);
-                SpawnBrick(kind, slot, points, (BlockMaterial)column);
+                var material = (BlockMaterial)column;
+                // Which named look this slot wears, decided by the slot alone so
+                // the board comes back identical every time it is built. See
+                // BlockDesigns.ForSlot: a placeholder until a level format can
+                // name the design it wants.
+                SpawnBrick(kind, slot, points, material,
+                    BlockDesigns.ForSlot(material, row, column));
             }
         }
     }
 
-    void SpawnBrick(BrickKind kind, Vector3 position, int points, BlockMaterial material)
+    void SpawnBrick(BrickKind kind, Vector3 position, int points, BlockMaterial material,
+        BlockDesign design)
     {
         var brick = Instantiate(PrefabFor(kind), position, Quaternion.identity, brickHolder);
         brick.Points = points;
         brick.SetMaterial(material, MaterialAsset(material));
         var variety = VarietyOf(material);
-        if (variety != null) brick.SetLook(variety.Roll(GrainTilesPerUnit));
+        // A material with designs wears the one this slot was given, so the same
+        // level is the same wall every time it is played; one with none rolls,
+        // which is what every material but Polymer still does. Either way the
+        // grain offset is drawn fresh per block — that is not part of a look,
+        // only which patch of a tiling repeat a face happens to show, and
+        // pinning it would print one patch across the whole board.
+        if (variety != null)
+        {
+            if (BlockDesigns.HasAny(material))
+            {
+                var definition = BlockDesigns.Of(design);
+                brick.SetLook(variety.Compose(definition.Grain, definition.Value, GrainTilesPerUnit));
+            }
+            else
+            {
+                brick.SetLook(variety.Roll(GrainTilesPerUnit));
+            }
+        }
         // A force field is never cleared, so a round that counted one would
         // wait for ever to be won.
         if (!brick.Unbreakable) bricksLeft++;
