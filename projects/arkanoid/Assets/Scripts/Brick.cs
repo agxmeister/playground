@@ -23,8 +23,48 @@ public class Brick : MonoBehaviour
     [SerializeField] Vector2 grainUvPerUnit = Vector2.one;
 
     [SerializeField] SpriteRenderer crackRenderer;
-    [SerializeField] Sprite[] lightCrackSprites;
-    [SerializeField] Sprite[] heavyCrackSprites;
+    // The crack net, stage-major: `stage * variants + variant`, so one flat
+    // array carries what used to be a light array and a heavy one. Unity does
+    // not serialize a jagged array, and a stride the setup script and this
+    // component both derive from CrackStages is cheaper than a wrapper type
+    // per row.
+    [SerializeField] Sprite[] crackSprites;
+
+    // How many steps of wear the net is drawn in. Four rather than the old
+    // two, because a Neutronium slab owes ten hits and a two-stage overlay
+    // spent across ten of them says almost nothing between the first and the
+    // last. Each stage draws the same net further out from where the block was
+    // first struck, so damage reads as one crack spreading rather than as a
+    // different crack each time. The setup script writes exactly this many
+    // textures per variant; it is the one number the two sides share.
+    public const int CrackStages = 4;
+
+    // How faint the net is on its first showing. It never starts invisible —
+    // a block that has been hit should say so — but the last hit before it
+    // goes should be the loudest, so opacity rides the same fraction the stage
+    // does.
+    const float CrackFirstOpacity = 0.55f;
+
+    // What share of its own light a cracked face keeps along the crack. The net
+    // is written white and tinted here, so this is the whole of its colour: the
+    // block's own colour at half strength, which is the same substance in
+    // shadow rather than a foreign grey pasted over it. A multiply keeps the
+    // hue exactly, so a crack in a magenta block is a darker magenta.
+    //
+    // **A crack is always darker, never lighter.** The first version turned
+    // round below a mid-grey pivot and drew a *pale* net on the dark half of
+    // the ladder, on the reasoning that a dark line has nothing to be seen
+    // against there. It reads badly, and the reason is that the overlay is a
+    // sprite — unlit, drawn at exactly the value asked for — while the block is
+    // lit: a pale line on a dark block is brighter than any lit part of that
+    // block, so it sits *on* the face rather than *in* it, and a screen of them
+    // looks like chalk rather than damage. Darker has no such failure mode,
+    // because a crack in a real surface is a place light does not reach.
+    //
+    // What it costs is the bottom of the ladder: Neutronium's albedo is 0.02,
+    // and half of nothing is nothing. That block wears its wear in the net's
+    // *shape* — the sheen it takes off the metal — rather than in its value.
+    const float CrackDarkness = 0.5f;
 
     // How far past its own edges a detonating block reaches for its neighbours.
     // The grid leaves a 0.14 gap between blocks in both directions, so anything
@@ -44,6 +84,14 @@ public class Brick : MonoBehaviour
     bool broken;
     BlockMaterialTraits traits = BlockMaterials.Of(BlockMaterial.Polymer);
 
+    // The colour of the face the cracks are drawn on, in sRGB, kept because
+    // the crack's colour is a function of it (see CrackTint). Both halves of
+    // the look write it: the shared material asset says what the substance is,
+    // and a per-block override on top of it says which pressing of it this one
+    // came out of — and the second is the one the eye actually sees, so it has
+    // the last word here too.
+    Color faceColor = Color.white;
+
     // Shape times material. Nothing stores this: both halves can be set in
     // either order at spawn and the answer is always current.
     public int Hardness => baseHardness * traits.Multiplier;
@@ -62,7 +110,15 @@ public class Brick : MonoBehaviour
     {
         Material = kind;
         traits = BlockMaterials.Of(kind);
-        if (asset != null) GetComponent<MeshRenderer>().sharedMaterial = asset;
+        if (asset != null)
+        {
+            GetComponent<MeshRenderer>().sharedMaterial = asset;
+            // Materials are authored in sRGB and converted once with .linear on
+            // the way into the shader, so the trip back out is .gamma. The
+            // crack's contrast is a judgement about what the eye sees, and the
+            // eye sees sRGB.
+            if (asset.HasProperty("_BaseColor")) faceColor = asset.GetColor("_BaseColor").gamma;
+        }
     }
 
     // The casting, on top of the substance. The shared asset still says what
@@ -80,6 +136,12 @@ public class Brick : MonoBehaviour
     public void SetLook(BlockLook look)
     {
         if (!look.HasGrain) return;
+
+        // The batch tint is what this block is actually the colour of, so it
+        // replaces the shared asset's colour as the face the cracks answer to.
+        // Already sRGB here — it makes the .linear trip below rather than
+        // having made it already.
+        faceColor = look.Tint;
 
         var tiling = new Vector2(
             look.GrainTilesPerUnit / Mathf.Max(grainUvPerUnit.x, 0.0001f),
@@ -125,20 +187,43 @@ public class Brick : MonoBehaviour
             return true;
         }
 
-        if (crackRenderer == null || lightCrackSprites == null || lightCrackSprites.Length == 0) return false;
+        if (crackRenderer == null || crackSprites == null || crackSprites.Length < CrackStages) return false;
+        int variants = crackSprites.Length / CrackStages;
 
         // The variant (and its mirroring) is picked on the first hit and then
         // kept, so escalating damage reads as the same crack spreading.
         if (crackVariant < 0)
         {
-            crackVariant = Random.Range(0, lightCrackSprites.Length);
+            crackVariant = Random.Range(0, variants);
             crackRenderer.flipX = Random.value < 0.5f;
             crackRenderer.flipY = Random.value < 0.5f;
         }
+
+        // Floor rather than round, so a block that is any part of the way
+        // through shows the first stage and the last stage is the one standing
+        // when the next hit takes it. A fraction of exactly 1 never arrives
+        // here — that is the branch above — so the clamp is only guarding the
+        // ball that overshoots.
         float fraction = damage / Hardness;
-        crackRenderer.sprite = fraction <= 0.5f ? lightCrackSprites[crackVariant] : heavyCrackSprites[crackVariant];
+        int stage = Mathf.Clamp(Mathf.FloorToInt(fraction * CrackStages), 0, CrackStages - 1);
+        crackRenderer.sprite = crackSprites[stage * variants + crackVariant];
+
+        // Two things say "more damage" at once: more of the net is drawn, and
+        // what is drawn is more opaque. Either alone was too quiet — the net
+        // grows by a third of itself between stages, which is a change a player
+        // has to be looking for, and opacity alone would have been the same
+        // crack turned up.
+        var tint = CrackTint();
+        tint.a = Mathf.Lerp(CrackFirstOpacity, 1f, fraction);
+        crackRenderer.color = tint;
         return false;
     }
+
+    // What colour a crack in this block is: the face at CrackDarkness of its
+    // own light, hue and all. Nothing branches on how dark the block already
+    // is — see the constant for why that turning point was taken out.
+    Color CrackTint() => new Color(
+        faceColor.r * CrackDarkness, faceColor.g * CrackDarkness, faceColor.b * CrackDarkness);
 
     // How hard a block going off flares the perimeter. See `Break`.
     const float BreakFlash = 0.6f;

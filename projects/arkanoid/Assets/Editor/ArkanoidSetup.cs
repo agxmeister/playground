@@ -124,6 +124,26 @@ public static class ArkanoidSetup
     const string LegacyCrackLightTexturePath = SpritesFolder + "/CrackLight.png";
     const string LegacyCrackHeavyTexturePath = SpritesFolder + "/CrackHeavy.png";
     const int CrackVariantCount = 4;
+    // How many steps of wear the net is drawn in. Must equal Brick.CrackStages
+    // — the component indexes one flat array as `stage * variants + variant`
+    // and this is the stride's other half.
+    const int CrackStageCount = Brick.CrackStages;
+    // 128 px at 128 pixels per unit, so the sprite's native size stays exactly
+    // one world unit and the Cracks child goes on covering its brick by
+    // inheriting the root's scale. The old net was 32 px, which was enough for
+    // three or four hairlines and is not enough for a mesh of them.
+    const int CrackTextureSize = 128;
+    // Rows of cells down the net. The columns follow from the block's own
+    // proportions (see WriteCrackTextures), so three rows across a 0.5-high
+    // brick puts a cell at 1/6 of a unit — coarse enough that a whole cell is
+    // visible from the player's seat, fine enough that a slab holds a couple
+    // of dozen of them.
+    const int CrackNetRows = 3;
+    // What each stage of the net has grown to, as a share of the edges in it,
+    // ordered outward from where the block was struck. The first showing is
+    // already a third of the net rather than a single cell: one cell of
+    // craquelure at this size reads as a speck, not as damage.
+    static readonly float[] CrackStageShares = { 0.34f, 0.58f, 0.80f, 1f };
     const string BouncyMaterialPath = PhysicsFolder + "/Bouncy.physicsMaterial2D";
     const string BallPrefabPath = PrefabsFolder + "/Ball.prefab";
     const string BrickPrefabPath = PrefabsFolder + "/Brick.prefab";
@@ -685,27 +705,28 @@ public static class ArkanoidSetup
         // rides on the MenuScreen root), so both are gone; the numbering of
         // everything after them is left alone rather than shuffled.
 
-        // Stage 11: crack overlay textures on disk, one light/heavy pair per
-        // random shape variant.
+        // Stage 11: crack overlay textures on disk — the net at each of its
+        // four stages, for each of the four random shape variants.
         bool crackTexturesMissing = false;
         for (int variant = 0; variant < CrackVariantCount; variant++)
-            crackTexturesMissing |= !File.Exists(ToAbsolute(CrackTexturePath("Light", variant)))
-                || !File.Exists(ToAbsolute(CrackTexturePath("Heavy", variant)));
+            for (int stage = 0; stage < CrackStageCount; stage++)
+                crackTexturesMissing |= !File.Exists(ToAbsolute(CrackTexturePath(stage, variant)));
         if (crackTexturesMissing)
         {
             WriteCrackTextures();
             AssetDatabase.Refresh();
-            Debug.Log("[ArkanoidSetup] Stage 11: wrote the crack texture variants.");
+            Debug.Log($"[ArkanoidSetup] Stage 11: wrote {CrackVariantCount * CrackStageCount} crack net textures.");
             return;
         }
 
-        // Stage 12: import crack textures as 1-unit sprites.
+        // Stage 12: import crack textures as 1-unit sprites. The pixels per
+        // unit is the texture's own size on purpose: the sprite has to come out
+        // exactly one world unit whatever resolution the net is drawn at, since
+        // the Cracks child covers its brick by inheriting the root's scale.
         bool cracksImported = true;
         for (int variant = 0; variant < CrackVariantCount; variant++)
-        {
-            cracksImported &= ConfigureSpriteImporter(CrackTexturePath("Light", variant), 32);
-            cracksImported &= ConfigureSpriteImporter(CrackTexturePath("Heavy", variant), 32);
-        }
+            for (int stage = 0; stage < CrackStageCount; stage++)
+                cracksImported &= ConfigureSpriteImporter(CrackTexturePath(stage, variant), CrackTextureSize);
         if (!cracksImported)
         {
             Debug.Log("[ArkanoidSetup] Stage 12: configured crack sprite importers.");
@@ -717,14 +738,13 @@ public static class ArkanoidSetup
         var brickPrefabRoot = AssetDatabase.LoadAssetAtPath<GameObject>(BrickPrefabPath);
         if (brickPrefabRoot != null && brickPrefabRoot.transform.Find("Cracks") == null)
         {
-            var lightCracks = LoadCrackSprites("Light");
-            var heavyCracks = LoadCrackSprites("Heavy");
-            if (lightCracks == null || heavyCracks == null)
+            var cracks = LoadCrackSprites();
+            if (cracks == null)
             {
                 Debug.Log("[ArkanoidSetup] Crack sprites not importable yet, waiting for next reload.");
                 return;
             }
-            AddCracksToBrickPrefab(lightCracks, heavyCracks);
+            AddCracksToBrickPrefab(cracks);
             Debug.Log("[ArkanoidSetup] Stage 13: added the crack overlay to the brick prefab.");
             return;
         }
@@ -934,24 +954,38 @@ public static class ArkanoidSetup
             return;
         }
 
-        // Stage 28: randomized-crack retrofit — the brick prefab predates the
-        // per-variant sprite arrays on Brick, so wire them in and drop the old
-        // single light/heavy texture pair.
-        if (brickPrefabRoot != null && brickPrefabRoot.transform.Find("Cracks") != null
-            && new SerializedObject(brickPrefabRoot.GetComponent<Brick>())
-                .FindProperty("lightCrackSprites").arraySize == 0)
+        // Stage 28: crack-net retrofit. Two overhauls now share this stage,
+        // because the second supersedes the first rather than following it: the
+        // brick prefab once predated the per-variant sprite arrays on Brick,
+        // and every brick prefab has since had a light/heavy pair of arrays
+        // where it now needs one flat stage-major array of the net. Both are
+        // the same repair — put the current sprite set on whatever block
+        // prefabs are standing — so the guard is written against the current
+        // end state and fires on either.
+        //
+        // It covers all four block prefabs rather than only the first, and it
+        // stands here, ahead of the stage that creates the other three, on
+        // purpose: a from-scratch run reaches that stage later and builds them
+        // with the right array in the first place, so the ones this finds are
+        // always ones an older run left behind.
+        var stalePrefabs = BrickPrefabsMissingCrackNet();
+        if (stalePrefabs.Count > 0)
         {
-            var lightCracks = LoadCrackSprites("Light");
-            var heavyCracks = LoadCrackSprites("Heavy");
-            if (lightCracks == null || heavyCracks == null)
+            var cracks = LoadCrackSprites();
+            if (cracks == null)
             {
                 Debug.Log("[ArkanoidSetup] Crack sprites not importable yet, waiting for next reload.");
                 return;
             }
-            WireCrackSpritesIntoBrickPrefab(lightCracks, heavyCracks);
+            foreach (var prefabPath in stalePrefabs) WireCrackSpritesIntoPrefab(prefabPath, cracks);
             AssetDatabase.DeleteAsset(LegacyCrackLightTexturePath);
             AssetDatabase.DeleteAsset(LegacyCrackHeavyTexturePath);
-            Debug.Log("[ArkanoidSetup] Stage 28: wired the crack variants into the brick prefab.");
+            for (int variant = 0; variant < CrackVariantCount; variant++)
+            {
+                AssetDatabase.DeleteAsset(LegacyCrackTexturePath("Light", variant));
+                AssetDatabase.DeleteAsset(LegacyCrackTexturePath("Heavy", variant));
+            }
+            Debug.Log($"[ArkanoidSetup] Stage 28: wired the crack net into {stalePrefabs.Count} block prefab(s).");
             return;
         }
 
@@ -1072,16 +1106,15 @@ public static class ArkanoidSetup
         {
             var brickMaterial = AssetDatabase.LoadAssetAtPath<Material>(BrickMaterialPath);
             var roundedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(RoundedBrickMeshPath);
-            var lightCracks = LoadCrackSprites("Light");
-            var heavyCracks = LoadCrackSprites("Heavy");
-            if (brickMaterial == null || roundedMesh == null || lightCracks == null || heavyCracks == null)
+            var cracks = LoadCrackSprites();
+            if (brickMaterial == null || roundedMesh == null || cracks == null)
             {
                 Debug.Log("[ArkanoidSetup] Brick variant dependencies not loadable yet, waiting for next reload.");
                 return;
             }
-            CreateHalfBrickPrefab(brickMaterial, lightCracks, heavyCracks);
-            CreateRoundedBrickPrefab(brickMaterial, roundedMesh, lightCracks, heavyCracks);
-            CreateRoundBrickPrefab(brickMaterial, lightCracks, heavyCracks);
+            CreateHalfBrickPrefab(brickMaterial, cracks);
+            CreateRoundedBrickPrefab(brickMaterial, roundedMesh, cracks);
+            CreateRoundBrickPrefab(brickMaterial, cracks);
             Debug.Log("[ArkanoidSetup] Stage 37: created the brick variant prefabs.");
             return;
         }
@@ -3205,106 +3238,231 @@ public static class ArkanoidSetup
         Object.DestroyImmediate(texture);
     }
 
-    static string CrackTexturePath(string weight, int variant) =>
+    static string CrackTexturePath(int stage, int variant) =>
+        SpritesFolder + "/CrackNet" + stage + variant + ".png";
+
+    // The light/heavy pair each variant used to be, kept only so the retrofit
+    // that replaces them with the net has something to delete.
+    static string LegacyCrackTexturePath(string weight, int variant) =>
         SpritesFolder + "/Crack" + weight + variant + ".png";
 
-    // Each variant is a light/heavy pair of jagged dark polylines on a
-    // transparent background, generated from a per-variant seeded random walk
-    // so every variant has its own shape while a from-scratch rebuild
-    // reproduces the same set. The heavy texture extends the light one, so
-    // escalating damage reads as the same crack spreading.
+    // A block cracks in a *net*: a lattice of irregular cells whose edges are
+    // the cracks, the way a glaze crazes or a windscreen goes. That is what
+    // the four stages per variant draw, each one the same net grown further
+    // out from the point the block was first struck — so a block that has been
+    // hit four times shows the crack of a block hit once with more of it, and
+    // not a different crack.
+    //
+    // Two things about the geometry are worth knowing before touching the
+    // numbers:
+    //
+    // **The net is authored pre-squashed.** The sprite is one unit square and
+    // the Cracks child inherits its brick's scale, so on a 1.5 x 0.5 slab
+    // everything in this texture is stretched three to one. A square lattice
+    // authored here would arrive as a course of wide bricks. So the columns
+    // are the rows times the block's own aspect: cells that are three times
+    // narrower than they are tall in texture space, and square on the screen.
+    // The two full-slot shapes and the rounded one are all 1.5 x 0.5 and get
+    // this exactly right; the half-width block (1.5:1) and the round one
+    // (square) are stretched less than the correction assumes and show cells
+    // that lean tall. One sprite set serves four shapes, which is the trade —
+    // the alternative is a texture set per aspect, and the two that are off
+    // are the two small blocks.
+    //
+    // **The perimeter of the lattice is not drawn.** Edges lying along the
+    // outer boundary would frame the block in a rectangle, which reads as a
+    // border rather than as damage; skipping them leaves a net whose cracks
+    // still run out to the edges of the face.
+    //
+    // Written white with the coverage in the alpha, because the colour is not
+    // a fact about the texture: Brick tints the renderer from the colour of
+    // the block the net is drawn on (see Brick.CrackTint).
     static void WriteCrackTextures()
     {
+        int rows = CrackNetRows;
+        int columns = Mathf.RoundToInt(rows * (BrickWidth / BrickHeight));
+
         for (int variant = 0; variant < CrackVariantCount; variant++)
         {
             var random = new System.Random(2026 + variant);
-            var polylines = new List<Vector2Int[]>();
+            var nodes = BuildCrackNetNodes(random, columns, rows);
+            var edges = BuildCrackNetEdges(random, nodes, columns, rows);
 
-            // Light: one main crack running down from the top edge, plus a
-            // short side branch.
-            var main = RandomCrackPolyline(random, new Vector2Int(random.Next(9, 24), 31), random.Next(3, 5));
-            polylines.Add(main);
-            polylines.Add(RandomCrackBranch(random, main));
-            WriteCrackTexture(CrackTexturePath("Light", variant), polylines.ToArray());
-
-            // Heavy: two more branches off the main crack plus an independent
-            // secondary crack from the top or bottom edge.
-            polylines.Add(RandomCrackBranch(random, main));
-            polylines.Add(RandomCrackBranch(random, main));
-            bool fromBottom = random.Next(2) == 0;
-            polylines.Add(RandomCrackPolyline(
-                random, new Vector2Int(random.Next(3, 29), fromBottom ? 0 : 31), 2, fromBottom));
-            WriteCrackTexture(CrackTexturePath("Heavy", variant), polylines.ToArray());
+            for (int stage = 0; stage < CrackStageCount; stage++)
+            {
+                int drawn = Mathf.Max(1, Mathf.RoundToInt(edges.Count * CrackStageShares[stage]));
+                WriteCrackTexture(CrackTexturePath(stage, variant), edges, drawn, stage);
+            }
         }
     }
 
-    // A jagged crack path: from `start`, each segment drops 5-9 px (rises
-    // instead when `up`) with a random horizontal swing.
-    static Vector2Int[] RandomCrackPolyline(System.Random random, Vector2Int start, int segments, bool up = false)
+    // The lattice's corners, each pushed off its grid position by up to
+    // CrackNodeJitter of a cell so no two cells come out the same shape. Nodes
+    // on the boundary slide along it but never off it: a crack that stopped
+    // short of the edge would leave a cell floating in the middle of an
+    // untouched face.
+    const float CrackNodeJitter = 0.34f;
+
+    static Vector2[,] BuildCrackNetNodes(System.Random random, int columns, int rows)
     {
-        var points = new Vector2Int[segments + 1];
-        points[0] = start;
-        var point = start;
-        for (int i = 1; i <= segments; i++)
+        float cellWidth = (float)CrackTextureSize / columns;
+        float cellHeight = (float)CrackTextureSize / rows;
+        var nodes = new Vector2[columns + 1, rows + 1];
+        for (int i = 0; i <= columns; i++)
+            for (int j = 0; j <= rows; j++)
+            {
+                bool edgeColumn = i == 0 || i == columns;
+                bool edgeRow = j == 0 || j == rows;
+                float jitterX = edgeColumn ? 0f : (float)(random.NextDouble() * 2 - 1) * CrackNodeJitter * cellWidth;
+                float jitterY = edgeRow ? 0f : (float)(random.NextDouble() * 2 - 1) * CrackNodeJitter * cellHeight;
+                nodes[i, j] = new Vector2(i * cellWidth + jitterX, j * cellHeight + jitterY);
+            }
+        return nodes;
+    }
+
+    // How many of the lattice's edges simply are not there. A complete net is
+    // a grid; a net with holes in it is a crack. A sixth of them missing is
+    // enough to break every straight run of three without opening a hole big
+    // enough to read as a gap.
+    const float CrackEdgeDropChance = 0.17f;
+
+    // How far off centre the impact the net spreads from may sit, as a share
+    // of the face. Kept inside the middle half so that no variant puts its
+    // origin in a corner, where the first stage would be a scuff on one end of
+    // the block rather than a crack in it.
+    const float CrackOriginSpread = 0.25f;
+
+    // The edges of the lattice, ordered outward from the impact — which is the
+    // whole of how a stage knows what to draw: stage n takes the first share
+    // of this list. The distance is roughed up by a random factor so the net
+    // does not grow as a visible circle; a crack front is uneven.
+    static List<(Vector2 From, Vector2 To)> BuildCrackNetEdges(
+        System.Random random, Vector2[,] nodes, int columns, int rows)
+    {
+        var origin = new Vector2(
+            CrackTextureSize * (0.5f + (float)(random.NextDouble() * 2 - 1) * CrackOriginSpread),
+            CrackTextureSize * (0.5f + (float)(random.NextDouble() * 2 - 1) * CrackOriginSpread));
+
+        var ranked = new List<(float Rank, Vector2 From, Vector2 To)>();
+        void Consider(Vector2 from, Vector2 to)
         {
-            point = new Vector2Int(
-                Mathf.Clamp(point.x + random.Next(-6, 7), 1, 30),
-                Mathf.Clamp(point.y + (up ? 1 : -1) * random.Next(5, 10), 0, 31));
-            points[i] = point;
+            if (random.NextDouble() < CrackEdgeDropChance) return;
+            float distance = Vector2.Distance((from + to) * 0.5f, origin);
+            ranked.Add((distance * (float)(0.75 + random.NextDouble() * 0.5), from, to));
         }
-        return points;
+
+        for (int i = 0; i < columns; i++)
+            for (int j = 1; j < rows; j++)
+                Consider(nodes[i, j], nodes[i + 1, j]);
+        for (int i = 1; i < columns; i++)
+            for (int j = 0; j < rows; j++)
+                Consider(nodes[i, j], nodes[i, j + 1]);
+
+        ranked.Sort((a, b) => a.Rank.CompareTo(b.Rank));
+        return ranked.ConvertAll(entry => (entry.From, entry.To));
     }
 
-    // A short branch splitting sideways off a random interior vertex of the
-    // parent crack.
-    static Vector2Int[] RandomCrackBranch(System.Random random, Vector2Int[] parent)
+    // One stage's texture: the first `drawn` edges of the net, each broken
+    // into three segments about a pair of points nudged off the straight line,
+    // since a crack that runs true is a scored line and not a broken one.
+    //
+    // Edges that have been there for two stages are drawn a pixel wider. A
+    // crack does not only spread, it opens, and this is the cheaper half of
+    // saying so: the oldest cracks on a nearly-broken block are the heavy ones
+    // and the newest are hairlines, which is the same reading the sprite's
+    // rising opacity gives from further away.
+    static void WriteCrackTexture(
+        string path, List<(Vector2 From, Vector2 To)> edges, int drawn, int stage)
     {
-        var from = parent[random.Next(1, parent.Length - 1)];
-        int direction = random.Next(2) == 0 ? -1 : 1;
-        int segments = random.Next(1, 3);
-        var points = new Vector2Int[segments + 1];
-        points[0] = from;
-        var point = from;
-        for (int i = 1; i <= segments; i++)
+        var texture = new Texture2D(CrackTextureSize, CrackTextureSize, TextureFormat.RGBA32, false);
+        var coverage = new float[CrackTextureSize * CrackTextureSize];
+        int widened = Mathf.RoundToInt(edges.Count * CrackStageShares[Mathf.Max(0, stage - 2)]);
+        for (int i = 0; i < drawn && i < edges.Count; i++)
         {
-            point = new Vector2Int(
-                Mathf.Clamp(point.x + direction * random.Next(4, 8), 1, 30),
-                Mathf.Clamp(point.y - random.Next(-2, 6), 0, 31));
-            points[i] = point;
+            var (from, to) = edges[i];
+            bool wide = stage >= 2 && i < widened;
+            // Seeded off the edge's own index, so the jag on an edge is the
+            // same jag at the next stage: this is one crack opening, not four
+            // drawn one after another.
+            foreach (var (a, b) in JagCrackEdge(new System.Random(2026 + i), from, to))
+                DrawCoverageLine(coverage, a, b, wide);
         }
-        return points;
-    }
 
-    static void WriteCrackTexture(string path, Vector2Int[][] polylines)
-    {
-        const int size = 32;
-        var crackColor = new Color(0.03f, 0.04f, 0.07f, 0.85f);
-        var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
-        var clear = new Color(0f, 0f, 0f, 0f);
-        for (int y = 0; y < size; y++)
-            for (int x = 0; x < size; x++)
-                texture.SetPixel(x, y, clear);
-
-        foreach (var polyline in polylines)
-            for (int i = 0; i < polyline.Length - 1; i++)
-                DrawLine(texture, polyline[i], polyline[i + 1], crackColor);
+        for (int y = 0; y < CrackTextureSize; y++)
+            for (int x = 0; x < CrackTextureSize; x++)
+                texture.SetPixel(x, y, new Color(1f, 1f, 1f, Mathf.Clamp01(coverage[y * CrackTextureSize + x])));
 
         texture.Apply();
         File.WriteAllBytes(ToAbsolute(path), texture.EncodeToPNG());
         Object.DestroyImmediate(texture);
     }
 
-    static void DrawLine(Texture2D texture, Vector2Int from, Vector2Int to, Color color)
+    // How far a crack wanders off the straight line between two lattice
+    // corners, as a share of that line's own length.
+    const float CrackEdgeWander = 0.14f;
+
+    // One edge as three segments, its two interior points pushed sideways off
+    // the line — both to the *same* side, by a random share of the first's
+    // offset, so the edge bows. Two independent offsets was the first version
+    // and it put a hard zigzag in every other edge: a crack wanders, it does
+    // not switchback twice in a sixth of an inch.
+    static List<(Vector2, Vector2)> JagCrackEdge(System.Random random, Vector2 from, Vector2 to)
     {
-        int steps = Mathf.Max(Mathf.Abs(to.x - from.x), Mathf.Abs(to.y - from.y));
-        for (int i = 0; i <= steps; i++)
+        var along = to - from;
+        var across = new Vector2(-along.y, along.x).normalized * (along.magnitude * CrackEdgeWander);
+        float bow = (float)(random.NextDouble() * 2 - 1);
+        var first = from + along / 3f + across * bow;
+        var second = from + along * (2f / 3f) + across * bow * (float)(0.25 + random.NextDouble() * 0.75);
+        return new List<(Vector2, Vector2)>
         {
-            float t = steps == 0 ? 0f : (float)i / steps;
-            int x = Mathf.RoundToInt(Mathf.Lerp(from.x, to.x, t));
-            int y = Mathf.RoundToInt(Mathf.Lerp(from.y, to.y, t));
-            texture.SetPixel(x, y, color);
-        }
+            (from, first), (first, second), (second, to),
+        };
     }
+
+    // Half the width of a crack in pixels, hairline and opened.
+    const float CrackHairlineRadius = 0.55f;
+    const float CrackOpenedRadius = 1f;
+
+    // A line laid into a coverage buffer rather than straight into pixels, so
+    // that two cracks meeting at a lattice corner do not draw over one another
+    // — the brightest of the two wins and the joint stays a joint.
+    //
+    // It is drawn by dragging a soft round brush along the line rather than by
+    // setting the nearest pixel at each step, and that is not a refinement.
+    // The nearest-pixel version came out as a **string of beads**: on anything
+    // near a diagonal it leaves pixels touching only at their corners, and the
+    // sprite is filtered bilinearly onto a block three times the texture's
+    // size, which turns every one of those corners into a gap. A brush whose
+    // edge falls off across a pixel is what makes the line continuous at the
+    // size it is actually seen at.
+    static void DrawCoverageLine(float[] coverage, Vector2 from, Vector2 to, bool wide)
+    {
+        float radius = wide ? CrackOpenedRadius : CrackHairlineRadius;
+        // Three samples a pixel, so consecutive brush stamps overlap heavily
+        // and the line has no scalloping along its length either.
+        int steps = Mathf.Max(1, Mathf.CeilToInt(Vector2.Distance(from, to) * 3f));
+        for (int i = 0; i <= steps; i++)
+            Stamp(coverage, Vector2.Lerp(from, to, (float)i / steps), radius);
+    }
+
+    // One brush stamp: every pixel within a pixel of the brush's edge takes
+    // coverage in proportion to how far inside it sits.
+    static void Stamp(float[] coverage, Vector2 point, float radius)
+    {
+        int reach = Mathf.CeilToInt(radius) + 1;
+        for (int dy = -reach; dy <= reach; dy++)
+            for (int dx = -reach; dx <= reach; dx++)
+            {
+                int x = Mathf.RoundToInt(point.x) + dx;
+                int y = Mathf.RoundToInt(point.y) + dy;
+                if (x < 0 || y < 0 || x >= CrackTextureSize || y >= CrackTextureSize) continue;
+                float distance = Vector2.Distance(new Vector2(x, y), point);
+                float amount = Mathf.Clamp01(radius + 0.5f - distance);
+                int index = y * CrackTextureSize + x;
+                if (coverage[index] < amount) coverage[index] = amount;
+            }
+    }
+
 
     // Returns true when the texture is already imported as a 1-unit sprite.
     static bool ConfigureSpriteImporter(string path, int pixelsPerUnit)
@@ -3353,7 +3511,7 @@ public static class ArkanoidSetup
     // color material makes the cube's UV squeeze irrelevant). The default
     // 1x1 BoxCollider2D inherits the transform scale, so flat-face impacts
     // reflect exactly like the normal brick's.
-    static void CreateHalfBrickPrefab(Material material, Sprite[] lightCracks, Sprite[] heavyCracks)
+    static void CreateHalfBrickPrefab(Material material, Sprite[] cracks)
     {
         var go = new GameObject("HalfBrick");
         go.transform.localScale = new Vector3(HalfBrickWidth, BrickHeight, BrickDepth);
@@ -3363,7 +3521,7 @@ public static class ArkanoidSetup
         go.AddComponent<Brick>();
         // The child inherits the root scale, so the 1-unit crack sprite covers
         // the brick; -0.51 lands just in front of the box face at z -0.5.
-        AddCrackOverlay(go, new Vector3(0f, 0f, -0.51f), Vector3.one, lightCracks, heavyCracks);
+        AddCrackOverlay(go, new Vector3(0f, 0f, -0.51f), Vector3.one, cracks);
         PrefabUtility.SaveAsPrefabAsset(go, HalfBrickPrefabPath);
         Object.DestroyImmediate(go);
     }
@@ -3372,7 +3530,7 @@ public static class ArkanoidSetup
     // transform, like the paddle), and the collider is a box shrunk by the
     // corner radius on every side with edgeRadius filling it back out — the
     // same rounded rectangle, so corner hits reflect off the curve's normal.
-    static void CreateRoundedBrickPrefab(Material material, Mesh roundedMesh, Sprite[] lightCracks, Sprite[] heavyCracks)
+    static void CreateRoundedBrickPrefab(Material material, Mesh roundedMesh, Sprite[] cracks)
     {
         var go = new GameObject("RoundedBrick");
         go.AddComponent<MeshFilter>().sharedMesh = roundedMesh;
@@ -3383,7 +3541,7 @@ public static class ArkanoidSetup
         collider.edgeRadius = RoundedBrickCornerRadius;
         go.AddComponent<Brick>();
         AddCrackOverlay(go, new Vector3(0f, 0f, -BrickDepth / 2f - 0.01f),
-            new Vector3(BrickWidth, BrickHeight, 1f), lightCracks, heavyCracks);
+            new Vector3(BrickWidth, BrickHeight, 1f), cracks);
         PrefabUtility.SaveAsPrefabAsset(go, RoundedBrickPrefabPath);
         Object.DestroyImmediate(go);
     }
@@ -3391,7 +3549,7 @@ public static class ArkanoidSetup
     // Round brick: a half-size sphere whose CircleCollider2D matches its
     // silhouette exactly, so the ball reflects off the circle's radial
     // normal — glancing hits deflect sideways instead of bouncing flat.
-    static void CreateRoundBrickPrefab(Material material, Sprite[] lightCracks, Sprite[] heavyCracks)
+    static void CreateRoundBrickPrefab(Material material, Sprite[] cracks)
     {
         var go = new GameObject("RoundBrick");
         go.transform.localScale = Vector3.one * RoundBrickDiameter;
@@ -3401,15 +3559,14 @@ public static class ArkanoidSetup
         go.AddComponent<Brick>();
         // 0.7 ~ an inscribed square: keeps the square crack sprite's pixels
         // over the sphere's circular silhouette instead of floating past it.
-        AddCrackOverlay(go, new Vector3(0f, 0f, -0.52f), Vector3.one * 0.7f, lightCracks, heavyCracks);
+        AddCrackOverlay(go, new Vector3(0f, 0f, -0.52f), Vector3.one * 0.7f, cracks);
         PrefabUtility.SaveAsPrefabAsset(go, RoundBrickPrefabPath);
         Object.DestroyImmediate(go);
     }
 
     // Adds the Cracks overlay child and wires it (and the sprite variant
     // arrays) into the Brick component on a prefab under construction.
-    static void AddCrackOverlay(GameObject root, Vector3 localPosition, Vector3 localScale,
-        Sprite[] lightCracks, Sprite[] heavyCracks)
+    static void AddCrackOverlay(GameObject root, Vector3 localPosition, Vector3 localScale, Sprite[] cracks)
     {
         var cracksGo = new GameObject("Cracks");
         cracksGo.transform.SetParent(root.transform, false);
@@ -3420,27 +3577,50 @@ public static class ArkanoidSetup
 
         var so = new SerializedObject(root.GetComponent<Brick>());
         so.FindProperty("crackRenderer").objectReferenceValue = renderer;
-        SetCrackSpriteArrays(so, lightCracks, heavyCracks);
+        SetObjectArray(so, "crackSprites", cracks);
         so.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    // All sprites of one weight ("Light"/"Heavy"), or null while any variant
-    // is still unimportable.
-    static Sprite[] LoadCrackSprites(string weight)
+    // The whole net as one flat array, stage-major — `stage * variants +
+    // variant`, which is exactly how Brick indexes it — or null while any one
+    // of them is still unimportable.
+    static Sprite[] LoadCrackSprites()
     {
-        var sprites = new Sprite[CrackVariantCount];
-        for (int variant = 0; variant < CrackVariantCount; variant++)
-        {
-            sprites[variant] = AssetDatabase.LoadAssetAtPath<Sprite>(CrackTexturePath(weight, variant));
-            if (sprites[variant] == null) return null;
-        }
+        var sprites = new Sprite[CrackStageCount * CrackVariantCount];
+        for (int stage = 0; stage < CrackStageCount; stage++)
+            for (int variant = 0; variant < CrackVariantCount; variant++)
+            {
+                var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(CrackTexturePath(stage, variant));
+                if (sprite == null) return null;
+                sprites[stage * CrackVariantCount + variant] = sprite;
+            }
         return sprites;
+    }
+
+    // Which block prefabs are not carrying the current crack net. A count is
+    // the whole test: the array is the stages times the variants, so a prefab
+    // built before either number moved has a different one — and one left over
+    // from the light/heavy pair of arrays has none at all, since that field is
+    // gone and its serialized data with it.
+    static List<string> BrickPrefabsMissingCrackNet()
+    {
+        var stale = new List<string>();
+        foreach (var path in new[]
+            { BrickPrefabPath, HalfBrickPrefabPath, RoundedBrickPrefabPath, RoundBrickPrefabPath })
+        {
+            var root = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            var brick = root != null ? root.GetComponent<Brick>() : null;
+            if (brick == null || root.transform.Find("Cracks") == null) continue;
+            if (new SerializedObject(brick).FindProperty("crackSprites").arraySize
+                != CrackStageCount * CrackVariantCount) stale.Add(path);
+        }
+        return stale;
     }
 
     // The child inherits the brick root's 1.5x0.5 scale, so the 1-unit crack
     // sprite stretches to cover the brick exactly. The renderer starts with no
     // sprite; Brick swaps in a light/heavy crack variant as damage accumulates.
-    static void AddCracksToBrickPrefab(Sprite[] lightCracks, Sprite[] heavyCracks)
+    static void AddCracksToBrickPrefab(Sprite[] cracks)
     {
         var root = PrefabUtility.LoadPrefabContents(BrickPrefabPath);
         var cracksGo = new GameObject("Cracks");
@@ -3450,23 +3630,27 @@ public static class ArkanoidSetup
 
         var so = new SerializedObject(root.GetComponent<Brick>());
         so.FindProperty("crackRenderer").objectReferenceValue = renderer;
-        SetCrackSpriteArrays(so, lightCracks, heavyCracks);
+        SetObjectArray(so, "crackSprites", cracks);
         so.ApplyModifiedPropertiesWithoutUndo();
 
         PrefabUtility.SaveAsPrefabAsset(root, BrickPrefabPath);
         PrefabUtility.UnloadPrefabContents(root);
     }
 
-    // Stage-28 retrofit path: the Cracks child already exists, only the
-    // variant arrays need wiring.
-    static void WireCrackSpritesIntoBrickPrefab(Sprite[] lightCracks, Sprite[] heavyCracks)
+    // Stage-28 retrofit path: the Cracks child already exists, only the sprite
+    // array needs replacing. The forced reimport at the end is not optional —
+    // SaveAsPrefabAsset writes the file, and Instantiate serves the *imported*
+    // copy, which otherwise goes on handing out clones wearing the old array
+    // while every file on disk reads correctly.
+    static void WireCrackSpritesIntoPrefab(string prefabPath, Sprite[] cracks)
     {
-        var root = PrefabUtility.LoadPrefabContents(BrickPrefabPath);
+        var root = PrefabUtility.LoadPrefabContents(prefabPath);
         var so = new SerializedObject(root.GetComponent<Brick>());
-        SetCrackSpriteArrays(so, lightCracks, heavyCracks);
+        SetObjectArray(so, "crackSprites", cracks);
         so.ApplyModifiedPropertiesWithoutUndo();
-        PrefabUtility.SaveAsPrefabAsset(root, BrickPrefabPath);
+        PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
         PrefabUtility.UnloadPrefabContents(root);
+        AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceUpdate);
     }
 
     static void SetObjectArray(SerializedObject so, string field, Object[] values)
@@ -3475,21 +3659,6 @@ public static class ArkanoidSetup
         property.arraySize = values.Length;
         for (int i = 0; i < values.Length; i++)
             property.GetArrayElementAtIndex(i).objectReferenceValue = values[i];
-    }
-
-    static void SetCrackSpriteArrays(SerializedObject so, Sprite[] lightCracks, Sprite[] heavyCracks)
-    {
-        foreach (var (field, sprites) in new[]
-        {
-            ("lightCrackSprites", lightCracks),
-            ("heavyCrackSprites", heavyCracks),
-        })
-        {
-            var property = so.FindProperty(field);
-            property.arraySize = sprites.Length;
-            for (int i = 0; i < sprites.Length; i++)
-                property.GetArrayElementAtIndex(i).objectReferenceValue = sprites[i];
-        }
     }
 
     // 128 px = 1 world unit: four rows of 64x32 px bricks (0.5 x 0.25 units)

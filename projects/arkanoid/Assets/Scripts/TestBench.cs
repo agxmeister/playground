@@ -62,10 +62,12 @@ public class TestBench : MonoBehaviour
     const float PaddleDrop = 4.5f;
 
     // How much of a block's own hardness one press of the damage key spends.
-    // A quarter, so the crack overlay's two stages can both be parked on: 0.25
-    // and 0.5 of the way through show the light crack, 0.75 the heavy one, and
-    // the fourth press breaks the block — which is worth seeing too.
-    const float DamageStep = 0.25f;
+    // A fifth, so every stage of the crack net can be parked on: the overlay
+    // takes its stage from `floor(fraction x 4)`, which puts 0.2, 0.4, 0.6 and
+    // 0.8 of the way through on stages 0 to 3, and the fifth press breaks the
+    // block — which is worth seeing too. A quarter, which this was while the
+    // overlay had two stages, would land on 1, 2, 3 and never show the first.
+    const float DamageStep = 0.2f;
 
     // Where the ball is put back when it falls out of the room. There is no
     // paddle here to serve it off, and a bench that quietly emptied itself of
@@ -554,7 +556,7 @@ public class TestBench : MonoBehaviour
             : variety.Roll(GameManager.GrainTilesPerUnit));
     }
 
-    // A quarter of every block's hardness at a time, applied through the same
+    // A fifth of every block's hardness at a time, applied through the same
     // TakeDamage the ball calls, so what is shown is the wear the game would
     // actually show rather than a crack sprite set by hand. An unbreakable
     // material refuses it and stays clean, which is itself worth seeing.
