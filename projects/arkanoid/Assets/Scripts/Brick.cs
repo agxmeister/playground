@@ -119,6 +119,15 @@ public class Brick : MonoBehaviour
             // eye sees sRGB.
             if (asset.HasProperty("_BaseColor")) faceColor = asset.GetColor("_BaseColor").gamma;
         }
+        else
+        {
+            // No asset handed over — a bench spawning a block with no game
+            // running is the only way here — so the block is whatever its
+            // prefab already wore, and that is what its cracks and its rubble
+            // have to answer to.
+            var worn = GetComponent<MeshRenderer>().sharedMaterial;
+            if (worn != null && worn.HasProperty("_BaseColor")) faceColor = worn.GetColor("_BaseColor").gamma;
+        }
     }
 
     // The casting, on top of the substance. The shared asset still says what
@@ -242,8 +251,16 @@ public class Brick : MonoBehaviour
         var body = renderer.sharedMaterial;
         // The rubble is handed the round's paddle, so the chunks a brick
         // throws are worth catching rather than only worth watching.
-        Debris.Spawn(transform.position, renderer.bounds.size,
-            body != null ? body.GetColor("_BaseColor") : Color.white, body,
+        //
+        // The chunks are the colour of *this* block rather than of the shared
+        // material asset, which for anything with a variety authored for it are
+        // two different colours: a Polymer block is the substance's grey only
+        // on average, and a dark casting of it that shattered into pale grey
+        // rubble read as another block's debris thrown where this one stood.
+        // `faceColor` is the same colour the cracks answer to, and for the same
+        // reason — it is what the block is actually seen to be. It is held in
+        // sRGB, so it makes the usual trip on the way to a shader.
+        Debris.Spawn(transform.position, renderer.bounds.size, faceColor.linear, body,
             1f, GameManager.Instance != null ? GameManager.Instance.Catcher : null);
         // The room takes note of it. Gentler than a border hit, and for a
         // reason rather than for taste: a brick goes off out in the middle of
