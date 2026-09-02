@@ -38,9 +38,36 @@ public static class ArkanoidSetup
         ("PolymerStipple", GrainKind.Stipple),
         ("PolymerCrumb", GrainKind.Crumb),
     };
+
+    // Ceramics' surface grains, written by the same machinery for the same
+    // reason — one height field, read out twice as a near-white albedo and a
+    // normal map — but built by carving rather than by scattering. Polymer's
+    // three characters are all *raised*: moulded plastic is a field of caps
+    // standing off a flat, and ScatterCaps is a field of caps. Every character
+    // on the ceramic reference is the opposite of that — a smooth glaze with
+    // something cut into it or stained through it: the craquelure net of a
+    // crackle glaze, the veining of a marble tile, the cloud in the body of an
+    // alabaster one. So these three start the height field at the surface
+    // (Flood) and take material away (CarveCrackle, CarveVeins, Cloud), which
+    // the two readouts already handle without a change: the albedo darkens
+    // wherever the field is low and the normal tilts into it, so a groove comes
+    // out dark and recessed exactly as a cap comes out pale and proud.
+    //
+    // The fine porcelain grit of the reference's matte tiles is deliberately
+    // *not* one of the three. It sits under all three instead (ScatterGrit),
+    // which is both what the reference shows — the speckle is there behind the
+    // veining as much as it is on its own — and what keeps the two characters
+    // that are nearly pure pigment from having no relief at all to be seen with
+    // on a face the light does not reach.
+    static readonly (string Name, GrainKind Kind)[] CeramicsGrains =
+    {
+        ("CeramicsCrackle", GrainKind.Crackle),
+        ("CeramicsVein", GrainKind.Vein),
+        ("CeramicsCloud", GrainKind.Cloud),
+    };
     static string GrainTexturePath(string name) => TexturesFolder + "/" + name + ".png";
     static string GrainNormalPath(string name) => TexturesFolder + "/" + name + "Normal.png";
-    // 1024 px laid at half a tile per unit (PolymerGrainTiles) is the same
+    // 1024 px laid at half a tile per unit (BlockGrainTiles) is the same
     // 512 texels a unit the original 256 px at two tiles a unit gave, but a
     // tile that spans two units is wider than any block face, so no face ever
     // shows the same patch of grain twice. At 256 px a full slab carried three
@@ -51,6 +78,22 @@ public static class ArkanoidSetup
     // at: cap radii scale by it and cap counts by its square, so the grain
     // comes out the same size on a block as it always did.
     const float GrainTileScale = GrainTextureSize / 256f;
+    // What every one of Polymer's three grains spends on pigment. One number
+    // for the three of them because the trade behind it is the same for all
+    // three (see WriteGrainAlbedo), and named rather than repeated so that
+    // retuning the plastic's is one edit.
+    const float PolymerContrast = 0.30f;
+    // Texels to a world unit on a block's face: the tile's own pixels over the
+    // world span BlockGrainTiles lays them across. Every *carved* feature is
+    // sized against this rather than in texels, and the distinction is worth
+    // the constant. A grain's caps are a property of the surface and are
+    // authored in texels of the 256 px sheet they were drawn on (GrainTileScale
+    // carries them to whatever size the tile is now); a crack or a vein is a
+    // feature of the *block* — how many cells cross a slab, whether a vein
+    // reads at the hundred-odd pixels a block is drawn at — and has to be given
+    // in the units the block is measured in. The first vein written in texels
+    // came out four times too long and the tile read as a bowl of noodles.
+    const float GrainTexelsPerUnit = GrainTextureSize * BlockGrainTiles;
 
     // The band a Polymer block's batch colour is drawn from: the whole sheet,
     // near-white through near-black, which is what the reference for the
@@ -71,6 +114,54 @@ public static class ArkanoidSetup
     const float PolymerDarkSmoothness = 0.45f;
     const float PolymerLightSmoothness = 0.12f;
     const float PolymerHueJitter = 0.03f;
+
+    // Ceramics' band. Narrow and bright where Polymer's is the whole sheet,
+    // because the reference is one substance rather than every colour a pellet
+    // is pressed in: fired white body under a clear glaze at the top, the grey
+    // marble tiles at the bottom, and a warmth through all of it that the
+    // plastic has none of. Stopping well short of black is the point of the
+    // bottom end — Polymer already goes there, and a x1 ceramic that could come
+    // out as dark as Neutronium would be throwing away the one thing a band is
+    // for.
+    static readonly Color CeramicsDarkest = new Color(0.400f, 0.395f, 0.375f, 1f);
+    static readonly Color CeramicsLightest = new Color(0.955f, 0.945f, 0.915f, 1f);
+    // A glaze is a glaze whatever it is over, so the two ends sit far closer
+    // together than plastic's do, and both are glossier than the shared
+    // BlockCeramics asset's own 0.08 — that number is unglazed bisque, and the
+    // reference is glazed. The dark end still leads, for the same reason it
+    // does in plastic: the grey tiles on the sheet are the polished ones.
+    const float CeramicsDarkSmoothness = 0.50f;
+    const float CeramicsLightSmoothness = 0.32f;
+    // Half Polymer's. Fired clay varies from batch to batch in *warmth* rather
+    // than in hue — a green ceramic is a different glaze, not the same one
+    // twice — and the band is bright enough throughout that even this shows.
+    const float CeramicsHueJitter = 0.015f;
+
+    // Every material with a surface of its own: the grains it may be moulded
+    // with and the band its batch colour is drawn from. A material with no
+    // entry wears its shared asset untouched, which is still every material but
+    // these two.
+    //
+    // This table is what stages 91-95 walk, and it is why they are plural. Each
+    // of them held Polymer by name, and the second material could not be a
+    // near-copy of the five of them: stage 95 wired the varieties by truncating
+    // the list to its one entry, so a second stage appending its own would have
+    // been undone on the following reload and the two would have taken turns for
+    // ever. Adding a third surfaced material is now an entry here and nothing
+    // else.
+    //
+    // Declared below the constants it reads because it reads them: static field
+    // initialisers run in the order they are written, and a table standing above
+    // the colours it names would be a table of black.
+    static readonly (BlockMaterial Material, (string Name, GrainKind Kind)[] Grains,
+        Color Darkest, Color Lightest, float DarkSmoothness, float LightSmoothness,
+        float HueJitter)[] BlockSurfaces =
+    {
+        (BlockMaterial.Polymer, PolymerGrains, PolymerDarkest, PolymerLightest,
+            PolymerDarkSmoothness, PolymerLightSmoothness, PolymerHueJitter),
+        (BlockMaterial.Ceramics, CeramicsGrains, CeramicsDarkest, CeramicsLightest,
+            CeramicsDarkSmoothness, CeramicsLightSmoothness, CeramicsHueJitter),
+    };
 
     // How many UV units each block shape lays across one world unit of its
     // face — the divisor that makes one authored grain density come out the
@@ -93,14 +184,20 @@ public static class ArkanoidSetup
             1f / (Mathf.PI * RoundBrickDiameter), 2f / (Mathf.PI * RoundBrickDiameter))),
     };
 
-    // Which relief a grain is. The three characters picked off the reference
-    // sheet: the orange-peel that dominates it, the tight speckle of the pale
-    // tiles, and the coarse granulate of the dark ones.
+    // Which relief a grain is, across both reference sheets. Polymer's three
+    // are the characters that dominate a sheet of moulded plastic: the
+    // orange-peel most of it wears, the tight speckle of the pale tiles, the
+    // coarse granulate of the dark ones. Ceramics' three are carved rather than
+    // scattered (see CeramicsGrains) and are the characters of a fired tile: a
+    // crackle glaze's craquelure net, a marble's veining, an alabaster's cloud.
     enum GrainKind
     {
         Pebble,
         Stipple,
         Crumb,
+        Crackle,
+        Vein,
+        Cloud,
     }
     const string BallPanelTexturePath = TexturesFolder + "/BallPanels.png";
     const string MenuFogMaterialPath = MaterialsFolder + "/MenuFog.mat";
@@ -2110,18 +2207,30 @@ public static class ArkanoidSetup
             }
         }
 
-        // Stage 91: Polymer's three surface grains, six files — a near-white
-        // albedo and a normal map each. The guard is the first albedo's absence,
-        // so retuning a grain means deleting the PNGs and letting this write
-        // them again, keeping their `.meta` files the way stage 79's ball
-        // texture is retuned: a new guid would break the references stage 95
-        // hands the GameManager.
-        if (!File.Exists(ToAbsolute(GrainTexturePath(PolymerGrains[0].Name))))
+        // Stage 91: every surfaced material's grains, two PNGs each — a
+        // near-white albedo and a normal map. The guard is any one of those
+        // files being absent, so retuning a grain means deleting its PNGs and
+        // letting this write them again, keeping their `.meta` files the way
+        // stage 79's ball texture is retuned: a new guid would break the
+        // references stage 95 hands the GameManager.
+        //
+        // Only the missing ones are written, which is what makes the guard worth
+        // reading per file rather than per material: retuning one grain of one
+        // material costs one grain, and a material appended to BlockSurfaces
+        // needs no more than that to get its surface.
+        if (FirstMissingGrain() != null)
         {
             Directory.CreateDirectory(ToAbsolute(TexturesFolder));
-            foreach (var grain in PolymerGrains) WriteGrainTextures(grain.Name, grain.Kind);
+            int written = 0;
+            foreach (var surface in BlockSurfaces)
+                foreach (var grain in surface.Grains)
+                {
+                    if (!GrainMapsMissing(grain.Name)) continue;
+                    WriteGrainTextures(grain.Name, grain.Kind);
+                    written++;
+                }
             AssetDatabase.Refresh();
-            Debug.Log($"[ArkanoidSetup] Stage 91: wrote {PolymerGrains.Length} polymer grains, albedo and normal.");
+            Debug.Log($"[ArkanoidSetup] Stage 91: wrote {written} grains, albedo and normal.");
             return;
         }
 
@@ -2136,45 +2245,52 @@ public static class ArkanoidSetup
         var strayNormal = FirstNonNormalMapGrain();
         if (strayNormal != null)
         {
-            foreach (var grain in PolymerGrains)
-            {
-                var importer = (TextureImporter)AssetImporter.GetAtPath(GrainNormalPath(grain.Name));
-                if (importer == null || importer.textureType == TextureImporterType.NormalMap) continue;
-                importer.textureType = TextureImporterType.NormalMap;
-                importer.SaveAndReimport();
-            }
-            Debug.Log("[ArkanoidSetup] Stage 92: imported the polymer grain normals as normal maps.");
+            foreach (var surface in BlockSurfaces)
+                foreach (var grain in surface.Grains)
+                {
+                    var importer = (TextureImporter)AssetImporter.GetAtPath(GrainNormalPath(grain.Name));
+                    if (importer == null || importer.textureType == TextureImporterType.NormalMap) continue;
+                    importer.textureType = TextureImporterType.NormalMap;
+                    importer.SaveAndReimport();
+                }
+            Debug.Log("[ArkanoidSetup] Stage 92: imported the grain normals as normal maps.");
             return;
         }
 
-        // Stage 93: give the shared BlockPolymer material the first grain, so a
-        // block that never gets a per-instance look (a level that leaves the
-        // varieties unwired, or anything spawning a brick outside BuildLevel)
-        // still comes out moulded rather than flat. It is also what turns the
-        // shader's normal-map path on: a keyword is a fact about the material and
-        // cannot be overridden per instance, so every per-block grain in the game
-        // is riding on this one call.
-        var polymerMaterial = AssetDatabase.LoadAssetAtPath<Material>(
-            BlockMaterialPath(BlockMaterial.Polymer));
-        var defaultGrain = AssetDatabase.LoadAssetAtPath<Texture2D>(
-            GrainTexturePath(PolymerGrains[0].Name));
-        var defaultGrainNormal = AssetDatabase.LoadAssetAtPath<Texture2D>(
-            GrainNormalPath(PolymerGrains[0].Name));
-        if (polymerMaterial != null && defaultGrain != null && defaultGrainNormal != null
-            && polymerMaterial.GetTexture("_BaseMap") != defaultGrain)
+        // Stage 93: give each surfaced material's shared asset its own first
+        // grain, so a block that never gets a per-instance look (a level that
+        // leaves the varieties unwired, or anything spawning a brick outside
+        // BuildLevel) still comes out surfaced rather than flat. It is also what
+        // turns the shader's normal-map path on: a keyword is a fact about the
+        // material and cannot be overridden per instance, so every per-block
+        // grain in the game is riding on this one call — and a new surfaced
+        // material whose asset this loop misses has no relief at all, whatever
+        // its variety hands the renderer.
+        if (FirstFlatSharedMaterial() != null)
         {
-            polymerMaterial.SetTexture("_BaseMap", defaultGrain);
-            polymerMaterial.SetTexture("_BumpMap", defaultGrainNormal);
-            polymerMaterial.EnableKeyword("_NORMALMAP");
-            // The full slab's own tiling, which is what this fallback would most
-            // likely be seen on. A per-instance look overrides both of these.
-            var slab = new Vector2(
-                PolymerGrainTiles * BrickWidth, PolymerGrainTiles * BrickHeight);
-            polymerMaterial.SetTextureScale("_BaseMap", slab);
-            polymerMaterial.SetTextureScale("_BumpMap", slab);
-            EditorUtility.SetDirty(polymerMaterial);
+            foreach (var surface in BlockSurfaces)
+            {
+                var shared = AssetDatabase.LoadAssetAtPath<Material>(
+                    BlockMaterialPath(surface.Material));
+                var defaultGrain = AssetDatabase.LoadAssetAtPath<Texture2D>(
+                    GrainTexturePath(surface.Grains[0].Name));
+                var defaultGrainNormal = AssetDatabase.LoadAssetAtPath<Texture2D>(
+                    GrainNormalPath(surface.Grains[0].Name));
+                if (shared == null || defaultGrain == null || defaultGrainNormal == null) continue;
+                if (shared.GetTexture("_BaseMap") == defaultGrain) continue;
+                shared.SetTexture("_BaseMap", defaultGrain);
+                shared.SetTexture("_BumpMap", defaultGrainNormal);
+                shared.EnableKeyword("_NORMALMAP");
+                // The full slab's own tiling, which is what this fallback would
+                // most likely be seen on. A per-instance look overrides both.
+                var slab = new Vector2(
+                    BlockGrainTiles * BrickWidth, BlockGrainTiles * BrickHeight);
+                shared.SetTextureScale("_BaseMap", slab);
+                shared.SetTextureScale("_BumpMap", slab);
+                EditorUtility.SetDirty(shared);
+            }
             AssetDatabase.SaveAssets();
-            Debug.Log("[ArkanoidSetup] Stage 93: put a grain and its normal on BlockPolymer.");
+            Debug.Log("[ArkanoidSetup] Stage 93: put a grain and its normal on the surfaced materials.");
             return;
         }
 
@@ -2200,8 +2316,13 @@ public static class ArkanoidSetup
             return;
         }
 
-        // Stage 95: hand Polymer's variety to the GameManager. A standing repair
-        // for the same reason stage 87 is: stage 91 rewrites texture assets, and
+        // Stage 95: hand the surfaced materials' varieties to the GameManager,
+        // one list entry per entry in BlockSurfaces and in its order — the list
+        // is matched by material value rather than by index (GameManager.
+        // VarietyOf), so the order is only ever this table's own.
+        //
+        // A standing repair for the same reason stage 87 is: stage 91 rewrites
+        // texture assets, and
         // rewriting one over a path already referenced destroys the object the
         // scene was pointing at rather than updating it, so these slots go null
         // instead of following the new PNG into the same file. The guard reads
@@ -2218,28 +2339,32 @@ public static class ArkanoidSetup
         var varietyManager = FindRootObject("GameManager");
         var varietyManagerComponent = varietyManager != null
             ? varietyManager.GetComponent<GameManager>() : null;
-        var grainTextures = LoadGrains(GrainTexturePath);
-        var grainNormalTextures = LoadGrains(GrainNormalPath);
-        if (varietyManagerComponent != null && grainTextures != null && grainNormalTextures != null)
+        if (varietyManagerComponent != null && AllGrainsLoadable())
         {
             var varietySo = new SerializedObject(varietyManagerComponent);
             var varieties = varietySo.FindProperty("blockVarieties");
-            if (PolymerVarietyDiffers(varieties, grainTextures, grainNormalTextures))
+            if (VarietiesDiffer(varieties))
             {
-                varieties.arraySize = 1;
-                var entry = varieties.GetArrayElementAtIndex(0);
-                entry.FindPropertyRelative("material").enumValueIndex = (int)BlockMaterial.Polymer;
-                FillTextureArray(entry.FindPropertyRelative("grains"), grainTextures);
-                FillTextureArray(entry.FindPropertyRelative("grainNormals"), grainNormalTextures);
-                entry.FindPropertyRelative("darkest").colorValue = PolymerDarkest;
-                entry.FindPropertyRelative("lightest").colorValue = PolymerLightest;
-                entry.FindPropertyRelative("darkSmoothness").floatValue = PolymerDarkSmoothness;
-                entry.FindPropertyRelative("lightSmoothness").floatValue = PolymerLightSmoothness;
-                entry.FindPropertyRelative("hueJitter").floatValue = PolymerHueJitter;
+                varieties.arraySize = BlockSurfaces.Length;
+                for (int i = 0; i < BlockSurfaces.Length; i++)
+                {
+                    var surface = BlockSurfaces[i];
+                    var entry = varieties.GetArrayElementAtIndex(i);
+                    entry.FindPropertyRelative("material").enumValueIndex = (int)surface.Material;
+                    FillTextureArray(entry.FindPropertyRelative("grains"),
+                        LoadGrains(surface.Grains, GrainTexturePath));
+                    FillTextureArray(entry.FindPropertyRelative("grainNormals"),
+                        LoadGrains(surface.Grains, GrainNormalPath));
+                    entry.FindPropertyRelative("darkest").colorValue = surface.Darkest;
+                    entry.FindPropertyRelative("lightest").colorValue = surface.Lightest;
+                    entry.FindPropertyRelative("darkSmoothness").floatValue = surface.DarkSmoothness;
+                    entry.FindPropertyRelative("lightSmoothness").floatValue = surface.LightSmoothness;
+                    entry.FindPropertyRelative("hueJitter").floatValue = surface.HueJitter;
+                }
                 varietySo.ApplyModifiedPropertiesWithoutUndo();
                 EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
                 EditorApplication.update += SaveSceneOnce;
-                Debug.Log("[ArkanoidSetup] Stage 95: wired Polymer's variety and queued a scene save.");
+                Debug.Log($"[ArkanoidSetup] Stage 95: wired {BlockSurfaces.Length} varieties and queued a scene save.");
                 return;
             }
         }
@@ -2815,21 +2940,57 @@ public static class ArkanoidSetup
         return AssetDatabase.GetAssetPath(filter.sharedMesh) != meshPath;
     }
 
-    // The grain density the shared Polymer material's fallback tiling is worked
-    // out at. The same number GameManager.GrainTilesPerUnit holds for the
-    // per-instance looks, written here because an editor script cannot read a
-    // private const out of a runtime one — if either moves, both move.
-    const float PolymerGrainTiles = 0.5f;
+    // The grain density the shared materials' fallback tiling is worked out at.
+    // The same number GameManager.GrainTilesPerUnit holds for the per-instance
+    // looks, written here because an editor script cannot read a private const
+    // out of a runtime one — if either moves, both move.
+    const float BlockGrainTiles = 0.5f;
 
     // The first grain normal still sitting on the default importer type, or null
     // once every one of them has been imported as a normal map.
     static string FirstNonNormalMapGrain()
     {
-        foreach (var grain in PolymerGrains)
+        foreach (var surface in BlockSurfaces)
+            foreach (var grain in surface.Grains)
+            {
+                var importer = (TextureImporter)AssetImporter.GetAtPath(GrainNormalPath(grain.Name));
+                if (importer != null && importer.textureType != TextureImporterType.NormalMap)
+                    return grain.Name;
+            }
+        return null;
+    }
+
+    // Whether a grain's two maps are not both on disk. Either one missing is the
+    // whole grain missing: they come off one height field and a half-written
+    // pair would put a relief on a block that its albedo disagreed with.
+    static bool GrainMapsMissing(string name) =>
+        !File.Exists(ToAbsolute(GrainTexturePath(name)))
+        || !File.Exists(ToAbsolute(GrainNormalPath(name)));
+
+    // The first grain that has not been written yet, or null once every one of
+    // them is on disk.
+    static string FirstMissingGrain()
+    {
+        foreach (var surface in BlockSurfaces)
+            foreach (var grain in surface.Grains)
+                if (GrainMapsMissing(grain.Name)) return grain.Name;
+        return null;
+    }
+
+    // The first surfaced material whose shared asset is not wearing its own
+    // first grain, or null once every one of them is. Read off the base map
+    // rather than off the keyword, because a material can carry `_NORMALMAP`
+    // from any number of things and only the texture says *which* grain.
+    static string FirstFlatSharedMaterial()
+    {
+        foreach (var surface in BlockSurfaces)
         {
-            var importer = (TextureImporter)AssetImporter.GetAtPath(GrainNormalPath(grain.Name));
-            if (importer != null && importer.textureType != TextureImporterType.NormalMap)
-                return grain.Name;
+            var shared = AssetDatabase.LoadAssetAtPath<Material>(
+                BlockMaterialPath(surface.Material));
+            var defaultGrain = AssetDatabase.LoadAssetAtPath<Texture2D>(
+                GrainTexturePath(surface.Grains[0].Name));
+            if (shared == null || defaultGrain == null) continue;
+            if (shared.GetTexture("_BaseMap") != defaultGrain) return surface.Material.ToString();
         }
         return null;
     }
@@ -2852,36 +3013,79 @@ public static class ArkanoidSetup
         return (authored - uvPerUnit).sqrMagnitude > 0.0000001f;
     }
 
-    // Every polymer grain map of one kind, in PolymerGrains' own order. Null if
+    // One material's grain maps of one kind, in its own table's order. Null if
     // any one of them is not readable back yet, so the stage that wants them
     // waits for a reload rather than wiring a hole.
-    static Texture2D[] LoadGrains(System.Func<string, string> pathOf)
+    static Texture2D[] LoadGrains((string Name, GrainKind Kind)[] grains,
+        System.Func<string, string> pathOf)
     {
-        var textures = new Texture2D[PolymerGrains.Length];
+        var textures = new Texture2D[grains.Length];
         for (int i = 0; i < textures.Length; i++)
         {
-            textures[i] = AssetDatabase.LoadAssetAtPath<Texture2D>(pathOf(PolymerGrains[i].Name));
+            textures[i] = AssetDatabase.LoadAssetAtPath<Texture2D>(pathOf(grains[i].Name));
             if (textures[i] == null) return null;
         }
         return textures;
     }
 
-    // Whether the wired variety is anything other than exactly this one entry
-    // holding exactly these textures — a wrong length anywhere, the wrong
-    // material, or any slot holding the wrong asset or nothing at all.
-    static bool PolymerVarietyDiffers(SerializedProperty varieties,
-        Texture2D[] grains, Texture2D[] normals)
+    // Whether every grain of every surfaced material can be read back as an
+    // asset. Stage 95 wires nothing until they all can: a variety wired around
+    // one unloadable texture is the null slot that stage the guard exists to
+    // catch, written deliberately.
+    static bool AllGrainsLoadable()
     {
-        if (varieties.arraySize != 1) return true;
-        var entry = varieties.GetArrayElementAtIndex(0);
-        if (entry.FindPropertyRelative("material").enumValueIndex != (int)BlockMaterial.Polymer)
-            return true;
-        return TextureArrayDiffers(entry.FindPropertyRelative("grains"), grains)
-            || TextureArrayDiffers(entry.FindPropertyRelative("grainNormals"), normals);
+        foreach (var surface in BlockSurfaces)
+            if (LoadGrains(surface.Grains, GrainTexturePath) == null
+                || LoadGrains(surface.Grains, GrainNormalPath) == null) return false;
+        return true;
     }
+
+    // Whether the wired varieties are anything other than exactly BlockSurfaces
+    // — a wrong length, an entry against the wrong material, a texture slot
+    // holding the wrong asset or nothing at all, or a band that has since been
+    // retuned.
+    //
+    // The bands are part of the guard and were not always: with only the
+    // textures read, moving CeramicsLightest left the scene wearing the old
+    // number with every file on disk agreeing, which is a look that cannot be
+    // tuned. They are compared loosely because the round trip through the scene
+    // file is decimal text — an exact float compare would fire on every reload
+    // for ever and queue a save with it.
+    static bool VarietiesDiffer(SerializedProperty varieties)
+    {
+        if (varieties.arraySize != BlockSurfaces.Length) return true;
+        for (int i = 0; i < BlockSurfaces.Length; i++)
+        {
+            var surface = BlockSurfaces[i];
+            var entry = varieties.GetArrayElementAtIndex(i);
+            if (entry.FindPropertyRelative("material").enumValueIndex != (int)surface.Material)
+                return true;
+            if (TextureArrayDiffers(entry.FindPropertyRelative("grains"),
+                    LoadGrains(surface.Grains, GrainTexturePath))
+                || TextureArrayDiffers(entry.FindPropertyRelative("grainNormals"),
+                    LoadGrains(surface.Grains, GrainNormalPath)))
+                return true;
+            if (ColorDiffers(entry.FindPropertyRelative("darkest").colorValue, surface.Darkest)
+                || ColorDiffers(entry.FindPropertyRelative("lightest").colorValue, surface.Lightest)
+                || FloatDiffers(entry.FindPropertyRelative("darkSmoothness").floatValue, surface.DarkSmoothness)
+                || FloatDiffers(entry.FindPropertyRelative("lightSmoothness").floatValue, surface.LightSmoothness)
+                || FloatDiffers(entry.FindPropertyRelative("hueJitter").floatValue, surface.HueJitter))
+                return true;
+        }
+        return false;
+    }
+
+    static bool FloatDiffers(float wired, float authored) => Mathf.Abs(wired - authored) > 0.0005f;
+
+    static bool ColorDiffers(Color wired, Color authored) =>
+        FloatDiffers(wired.r, authored.r) || FloatDiffers(wired.g, authored.g)
+        || FloatDiffers(wired.b, authored.b) || FloatDiffers(wired.a, authored.a);
 
     static bool TextureArrayDiffers(SerializedProperty slot, Texture2D[] textures)
     {
+        // Nothing to compare against is not a difference: the caller has already
+        // decided to wait for a reload (AllGrainsLoadable).
+        if (textures == null) return false;
         if (slot.arraySize != textures.Length) return true;
         for (int i = 0; i < textures.Length; i++)
             if (slot.GetArrayElementAtIndex(i).objectReferenceValue != textures[i]) return true;
@@ -3711,6 +3915,11 @@ public static class ArkanoidSetup
         var random = new System.Random(name.GetHashCode());
         var height = new float[size * size];
         float normalStrength;
+        // How much of the grain is pigment rather than relief. Per-kind since
+        // the ceramics arrived: see WriteGrainAlbedo for what it trades, and
+        // note that the two carved characters that are nearly pure stain in the
+        // reference — a vein, a cloud — have almost nothing *but* this.
+        float contrast;
 
         switch (kind)
         {
@@ -3719,6 +3928,7 @@ public static class ArkanoidSetup
             case GrainKind.Pebble:
                 ScatterCaps(height, size, random, 220, 10f, 18f, GrainTileScale);
                 normalStrength = 9f * GrainTileScale;
+                contrast = PolymerContrast;
                 break;
             // The tight even speckle of the pale tiles. Far more, far smaller:
             // at block size this reads as a softened sheen rather than as
@@ -3726,18 +3936,291 @@ public static class ArkanoidSetup
             case GrainKind.Stipple:
                 ScatterCaps(height, size, random, 1400, 3f, 6f, GrainTileScale);
                 normalStrength = 4f * GrainTileScale;
+                contrast = PolymerContrast;
                 break;
             // Coarse granulate: big caps for the chunk, then a fine layer over
             // the top so the chunks themselves are not smooth.
-            default:
+            case GrainKind.Crumb:
                 ScatterCaps(height, size, random, 90, 18f, 34f, GrainTileScale);
                 ScatterCaps(height, size, random, 260, 5f, 10f, GrainTileScale);
                 normalStrength = 13f * GrainTileScale;
+                contrast = PolymerContrast;
+                break;
+
+            // A crackle glaze. The net is a jittered-grid Voronoi's cell
+            // boundaries, which is what a glaze shrinking over a body it no
+            // longer fits actually cracks into: cells of one rough size, no two
+            // the same shape, every junction a meeting of three. The clouding
+            // under it is faint on purpose — a crackle tile's interest is the
+            // net, and a body mottled as hard as the alabaster's would fight it.
+            case GrainKind.Crackle:
+                Flood(height, 1f);
+                ScatterGrit(height, size, random, GrainTileScale);
+                Cloud(height, size, 1103, 0.08f, 4);
+                CarveCrackle(height, size, random, 0.14f, 0.010f, 0.85f);
+                // The crack's own half-width in texels, by WriteGrainNormal's
+                // rule — and *not* scaled by the tile, which is the correction
+                // the first render earned. At 5 × GrainTileScale the grooves
+                // came out as near-vertical canyons and the cells between them
+                // as domed cobbles: a photograph of dried mud rather than of a
+                // glaze. A crackle glaze is a *flat* surface with a hairline
+                // crease in it, and the darkness of the line is the albedo's
+                // job (contrast, below) rather than the relief's.
+                normalStrength = 2.5f;
+                // The highest of the six: the net is the entire character, and
+                // it has to survive both the end faces the light misses and the
+                // mip levels a block a hundred-odd pixels tall is drawn from.
+                contrast = 0.45f;
+                break;
+
+            // A marble tile. Two heavy veins per authored tile carrying the eye
+            // and a tangle of hairlines that only show close up, which is the
+            // proportion the reference's veined tiles keep — one or two veins a
+            // face doing the work. Walked rather than drawn (CarveVeins): a vein
+            // is a crack that was filled, so it wanders the way a crack
+            // propagates and not the way a line is laid down.
+            case GrainKind.Vein:
+                Flood(height, 1f);
+                ScatterGrit(height, size, random, GrainTileScale);
+                Cloud(height, size, 5077, 0.10f, 3);
+                CarveVeins(height, size, random, 6, 0.026f, 2.5f, 0.70f);
+                CarveVeins(height, size, random, 14, 0.008f, 0.8f, 0.40f);
+                // Deliberately a fraction of what the vein's own radius would
+                // ask for: a vein is a stain and not a ditch, and a marble tile
+                // is polished flat straight across it. That leaves the grit
+                // under it reading as pigment rather than as relief, which is
+                // the same fact said twice — polished means the grit is under
+                // the glaze and not in the surface.
+                normalStrength = 3f;
+                contrast = 0.55f;
+                break;
+
+            // An alabaster tile: the cloud in the body seen through a clear
+            // glaze. No edges anywhere, only a slow drift with two finer
+            // octaves over it, and the amplitudes falling steeply because the
+            // reference's clouding is *large* — detail at the pixel would come
+            // out as the grit it already has.
+            default:
+                Flood(height, 1f);
+                ScatterGrit(height, size, random, GrainTileScale);
+                Cloud(height, size, 8821, 0.40f, 3);
+                Cloud(height, size, 4409, 0.18f, 7);
+                Cloud(height, size, 6151, 0.07f, 15);
+                // The one ceramic character with nothing in relief of its own —
+                // a cloud is in the body, not on the face — so here the grit's
+                // own caps are what the strength is sized for, and it is the
+                // only one of the three that keeps the tile's scaling.
+                normalStrength = 3.5f * GrainTileScale;
+                contrast = 0.45f;
                 break;
         }
 
-        WriteGrainAlbedo(GrainTexturePath(name), height, size);
+        WriteGrainAlbedo(GrainTexturePath(name), height, size, contrast);
         WriteGrainNormal(GrainNormalPath(name), height, size, normalStrength);
+    }
+
+    // Every ceramic grain starts here: a flat surface, which is the one thing
+    // Polymer's do not have. A scattered grain builds up from nothing and its
+    // flat is the zero it never filled; a carved one is a surface first and its
+    // character is what has been taken out of it.
+    static void Flood(float[] height, float value)
+    {
+        for (int i = 0; i < height.Length; i++) height[i] = value;
+    }
+
+    // The fine porcelain grit under all three ceramic characters (see
+    // CeramicsGrains). Scattered with Polymer's own ScatterCaps, into a buffer
+    // of its own and then pressed into the surface rather than laid on it,
+    // because a ceramic's field runs the other way up: max-combining caps
+    // straight into a flooded field would find every cap lower than the flat
+    // and change nothing at all.
+    //
+    // Shallow — a tenth of the field — and that is the whole of it. Grit deep
+    // enough to see on its own would be sand rather than fired clay, and the
+    // reference's matte tiles are only just not smooth.
+    static void ScatterGrit(float[] height, int size, System.Random random, float scale)
+    {
+        const float depth = 0.10f;
+        var caps = new float[size * size];
+        ScatterCaps(caps, size, random, 1600, 2f, 5f, scale);
+        for (int i = 0; i < height.Length; i++)
+            height[i] = Mathf.Min(height[i], 1f - depth * (1f - caps[i]));
+    }
+
+    // Wrapped value noise taken out of the surface: the body of a tile, which
+    // is a thing with no edges in it. Subtracted rather than min-combined, so
+    // octaves stack and a groove carved afterwards still lands on whatever the
+    // body was doing underneath it.
+    //
+    // It is nearly all pigment by construction and that is the point of using
+    // it: a gradient this slow has essentially no gradient, so the normal map
+    // barely registers it while the albedo carries all of it. A cloud is
+    // something seen *in* a surface rather than on it.
+    static void Cloud(float[] height, int size, int seed, float amplitude, int period)
+    {
+        var lattice = NoiseLattice(period, seed);
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float value = SampleNoiseLattice(lattice, (float)x / size, (float)y / size);
+                int index = y * size + x;
+                height[index] = Mathf.Clamp01(height[index] - amplitude * (1f - value));
+            }
+    }
+
+    // A craquelure net cut into the surface: the cell boundaries of a Voronoi
+    // whose seeds are one per grid cell, jittered inside it.
+    //
+    // The jittered grid rather than a free scatter is not tidiness. Free seeds
+    // clump, and a clump is a knot of tiny cells among big ones, which reads as
+    // a tile somebody dropped rather than as a glaze that crazed. Bounding the
+    // jitter inside its own cell is also what makes the search below correct:
+    // only a pixel's own grid neighbourhood can hold the seeds nearest to it.
+    //
+    // `cell` is how wide one cell of the net is and `width` how wide a crack
+    // is, both in world units (GrainTexelsPerUnit) — a cell is a thing counted
+    // across a block, so the block is what it has to be measured against. The
+    // first pass sized it in texels and came out at eighteen cells across a
+    // slab, which is a texture rather than a craze; ten is where the eye reads
+    // individual cells at the size a block is actually drawn.
+    static void CarveCrackle(float[] height, int size, System.Random random, float cellSize,
+        float width, float depth)
+    {
+        int divisions = Mathf.Max(2, Mathf.RoundToInt(size / (cellSize * GrainTexelsPerUnit)));
+        width *= GrainTexelsPerUnit;
+        float cell = (float)size / divisions;
+
+        var seeds = new Vector2[divisions * divisions];
+        for (int gy = 0; gy < divisions; gy++)
+            for (int gx = 0; gx < divisions; gx++)
+                seeds[gy * divisions + gx] = new Vector2(
+                    (gx + 0.2f + 0.6f * (float)random.NextDouble()) * cell,
+                    (gy + 0.2f + 0.6f * (float)random.NextDouble()) * cell);
+
+        // How hard the glaze pulled where a crack runs, so the net has major
+        // cracks and hairlines in it rather than one width the whole way over.
+        // Coarse and slow: it varies the net by region, which is what the
+        // reference shows, and not crack by crack, which would put a step in the
+        // middle of a line.
+        var pull = NoiseLattice(12, 90563);
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float nearest = float.MaxValue, second = float.MaxValue;
+                int cx = (int)(x / cell), cy = (int)(y / cell);
+                for (int dy = -2; dy <= 2; dy++)
+                {
+                    for (int dx = -2; dx <= 2; dx++)
+                    {
+                        int gx = cx + dx, gy = cy + dy;
+                        // Wrapped, with the seed carried across the seam along
+                        // with the index it was fetched by, so the net closes on
+                        // itself and the tile has no edge to seam at.
+                        var seed = seeds[
+                            ((gy % divisions + divisions) % divisions) * divisions
+                            + ((gx % divisions + divisions) % divisions)];
+                        float sx = seed.x + Mathf.Floor((float)gx / divisions) * size;
+                        float sy = seed.y + Mathf.Floor((float)gy / divisions) * size;
+                        // Squared while they are being sorted; only the two that
+                        // win are worth a square root.
+                        float distance = (sx - x) * (sx - x) + (sy - y) * (sy - y);
+                        if (distance < nearest) { second = nearest; nearest = distance; }
+                        else if (distance < second) second = distance;
+                    }
+                }
+
+                // The gap between the two nearest seeds' claims, not the
+                // distance to either: it is zero exactly on a boundary and grows
+                // away from it, which is a net of lines. The distance to the
+                // nearest seed alone would be a field of dots.
+                float edge = Mathf.Sqrt(second) - Mathf.Sqrt(nearest);
+                if (edge >= width) continue;
+                float groove = 1f - Mathf.SmoothStep(0f, 1f, edge / width);
+                float local = 0.45f + 0.55f * SampleNoiseLattice(pull, (float)x / size, (float)y / size);
+                int index = y * size + x;
+                height[index] = Mathf.Min(height[index], 1f - depth * local * groove);
+            }
+        }
+    }
+
+    // Veins walked across the tile and stamped as chains of soft grooves. A
+    // vein is a crack the ground filled back in, so it is walked rather than
+    // drawn: the heading takes a small random step at every stamp, which is
+    // smooth over a few texels and unpredictable over the length of the tile. A
+    // heading drawn fresh each step would be a cloud of noise, and a straight
+    // line with a curve fitted to it would be a drawn line.
+    //
+    // `count` is veins across the whole tile; `radius` and `length` are in
+    // world units, like everything else carved here. Counted per tile rather
+    // than per area because a vein is not a density — a face carries one or two
+    // of them and the question is how many cross a slab, which is a count.
+    static void CarveVeins(float[] height, int size, System.Random random, int count,
+        float radius, float length, float depth)
+    {
+        radius *= GrainTexelsPerUnit;
+        for (int i = 0; i < count; i++)
+        {
+            float x = (float)random.NextDouble() * size;
+            float y = (float)random.NextDouble() * size;
+            float heading = (float)random.NextDouble() * Mathf.PI * 2f;
+            int steps = Mathf.Max(1, Mathf.RoundToInt(length * GrainTexelsPerUnit / VeinStep));
+            for (int step = 0; step < steps; step++)
+            {
+                heading += ((float)random.NextDouble() - 0.5f) * VeinWander;
+                x += Mathf.Cos(heading) * VeinStep;
+                y += Mathf.Sin(heading) * VeinStep;
+                // Faded in and out over the first and last fifth, so a vein
+                // thins away to nothing rather than stopping at a blunt end
+                // nothing in stone would explain — and, since the walk wraps,
+                // so that the two ends meeting somewhere in the tile do not
+                // read as a join.
+                float along = (step + 0.5f) / steps;
+                float taper = Mathf.SmoothStep(0f, 1f, Mathf.Min(along, 1f - along) / 0.2f);
+                // A slow swell along the run on top of that, because a vein is
+                // not one width for its whole length either. Offset by the
+                // vein's own index so two of them do not swell in step.
+                float swell = 0.65f + 0.35f * Mathf.Sin(along * 7f + i);
+                StampGroove(height, size, x, y, radius * taper * swell, depth * taper);
+            }
+        }
+    }
+
+    // How far a vein walks between stamps and how far its heading may wander at
+    // each one. The step is short enough that consecutive stamps overlap even at
+    // the thinnest radius a taper leaves, or a vein would come out as a dotted
+    // line; the wander is what makes it a vein rather than a ray.
+    //
+    // The wander is small and has to be. It compounds — a walk of n steps ends
+    // up about `wander × sqrt(n / 12)` radians off where it started — and a vein
+    // is a thousand-odd steps long, so 0.5 ends up several turns of heading and
+    // draws a curl. 0.12 works out to under a radian across a whole vein, which
+    // is a line that meanders.
+    const float VeinStep = 1.5f;
+    const float VeinWander = 0.12f;
+
+    // One stamp of a vein, pressed into the surface: smoothstepped from its rim
+    // to its middle for the same reason ScatterCaps' falloff is, wrapped for the
+    // same reason, and min-combined so the overlapping stamps along a walk make
+    // one even groove rather than a string of ever-deeper pits.
+    static void StampGroove(float[] height, int size, float cx, float cy, float radius, float depth)
+    {
+        if (radius <= 0f || depth <= 0f) return;
+        int reach = Mathf.CeilToInt(radius);
+        for (int dy = -reach; dy <= reach; dy++)
+        {
+            for (int dx = -reach; dx <= reach; dx++)
+            {
+                float distance = Mathf.Sqrt(dx * dx + dy * dy);
+                if (distance > radius) continue;
+                int x = (((int)cx + dx) % size + size) % size;
+                int y = (((int)cy + dy) % size + size) % size;
+                float value = 1f - depth * Mathf.SmoothStep(0f, 1f, 1f - distance / radius);
+                int index = y * size + x;
+                if (value < height[index]) height[index] = value;
+            }
+        }
     }
 
     // Rounded caps laid down wrapped, combined by max. The falloff is
@@ -3795,13 +4278,19 @@ public static class ArkanoidSetup
     // It is a trade rather than a free win, and the cost is the reason it was
     // 0.10 to begin with: pigment multiplies the tint, so it eats the range a
     // dark block has left to be dark with, and it is *added* to the relief on
-    // the faces that are lit rather than swapped for it. 0.30 is where the end
-    // faces stop reading as blank without the lit faces reading as painted;
-    // `normalStrength` is deliberately left alone, since the moulding on the
-    // front face is what the surface is judged on and it was already right.
-    static void WriteGrainAlbedo(string path, float[] height, int size)
+    // the faces that are lit rather than swapped for it. Polymer's 0.30 is where
+    // the end faces stop reading as blank without the lit faces reading as
+    // painted; `normalStrength` was deliberately left alone alongside it, since
+    // the moulding on the front face is what the surface is judged on and it was
+    // already right.
+    //
+    // **It is the caller's number rather than a constant here** since the
+    // ceramics arrived, because the trade lands differently for a carved
+    // character: a marble's vein is pigment in the world too — the tile is
+    // polished flat across it — and its band is bright enough throughout to
+    // spend more than plastic's can (see CeramicsDarkest).
+    static void WriteGrainAlbedo(string path, float[] height, int size, float contrast)
     {
-        const float contrast = 0.30f;
         var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
         for (int y = 0; y < size; y++)
         {
@@ -3889,9 +4378,9 @@ public static class ArkanoidSetup
     static void WriteFogTexture()
     {
         const int size = 256;
-        var coarse = FogLattice(3, 20240816);
-        var middle = FogLattice(6, 90210);
-        var fine = FogLattice(12, 4711);
+        var coarse = NoiseLattice(3, 20240816);
+        var middle = NoiseLattice(6, 90210);
+        var fine = NoiseLattice(12, 4711);
 
         var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
         for (int y = 0; y < size; y++)
@@ -3899,9 +4388,9 @@ public static class ArkanoidSetup
             for (int x = 0; x < size; x++)
             {
                 float u = (float)x / size, v = (float)y / size;
-                float value = 0.55f * SampleFogLattice(coarse, u, v)
-                    + 0.3f * SampleFogLattice(middle, u, v)
-                    + 0.15f * SampleFogLattice(fine, u, v);
+                float value = 0.55f * SampleNoiseLattice(coarse, u, v)
+                    + 0.3f * SampleNoiseLattice(middle, u, v)
+                    + 0.15f * SampleNoiseLattice(fine, u, v);
                 // Cut the thin half away and ease the rest in, which leaves
                 // banks with clear air between them rather than an even veil.
                 float alpha = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.36f, 0.78f, value));
@@ -3914,10 +4403,13 @@ public static class ArkanoidSetup
         Object.DestroyImmediate(texture);
     }
 
-    // A grid of random values that wraps, which is what makes the cloud tile:
-    // the sample at 1 is the sample at 0. Seeded, so a from-scratch build
-    // reproduces the same weather.
-    static float[,] FogLattice(int period, int seed)
+    // A grid of random values that wraps, which is what makes anything sampled
+    // off it tile: the sample at 1 is the sample at 0. Seeded, so a
+    // from-scratch build reproduces the same weather — and the same marble.
+    // Written for the menu's fog and since borrowed by the ceramic grains'
+    // clouding (Cloud), which wants exactly the same thing: soft, tiling,
+    // reproducible, and with no edge anywhere in it.
+    static float[,] NoiseLattice(int period, int seed)
     {
         var random = new System.Random(seed);
         var values = new float[period, period];
@@ -3927,7 +4419,7 @@ public static class ArkanoidSetup
         return values;
     }
 
-    static float SampleFogLattice(float[,] values, float u, float v)
+    static float SampleNoiseLattice(float[,] values, float u, float v)
     {
         int period = values.GetLength(0);
         float x = u * period, y = v * period;
