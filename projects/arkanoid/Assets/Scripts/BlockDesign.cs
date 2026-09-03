@@ -14,8 +14,8 @@ using UnityEngine;
 // picture twice.
 //
 // **The die is not gone, it is narrowed.** `BlockVariety.Roll` still exists and
-// still means what it did; a material with no designs, which is every material
-// but Polymer, goes on rolling. What a design must never become is a second
+// still means what it did; a material with no designs — which is every material
+// but Polymer and Ceramics — goes on rolling. What a design must never become is a second
 // hardness — nothing here touches `BlockMaterials`, and two blocks of one
 // material differing in look differ in nothing else.
 public enum BlockDesign
@@ -31,6 +31,23 @@ public enum BlockDesign
     // big caps throwing the hard highlights that carry the relief down where
     // there is almost no tint left to modulate.
     Basalt,
+    // Ceramics', chosen on the bench the same way and written down from the same
+    // readout. Light to dark like Polymer's, and each one names a surface as
+    // well as a value, because on a ceramic the two arrive together: the pale
+    // end of this band is the fine white body you would only put veining on,
+    // and the dark end is the one that wants a cloud rather than a net.
+    //
+    // The near-white marble: veining on a body pale enough for the veins to be
+    // the only thing on it.
+    Porcelain,
+    // The middle, wearing the craquelure net — the one design of the three whose
+    // character is a *line*, and the value where a warm mid grey gives those
+    // lines something to be dark against.
+    Craze,
+    // The dark end, clouded. Down here the net would read as a grid of grout and
+    // the veining as scratches; a cloud is what still reads, because it is the
+    // one character that is in the body rather than on the face.
+    Slate,
 }
 
 public static class BlockDesigns
@@ -62,19 +79,27 @@ public static class BlockDesigns
     const int Stipple = 1;
     const int Crumb = 2;
 
-    // The three, in the enum's own order so `(int)design` indexes this directly.
+    // And Ceramics' three, in `ArkanoidSetup.CeramicsGrains`' order.
+    const int Crackle = 0;
+    const int Vein = 1;
+    const int Cloudy = 2;
+
+    // Every design, in the enum's own order so `(int)design` indexes this
+    // directly.
     //
-    // The values were picked on the bench in design mode and measured off the
-    // render rather than guessed: a block at `Value` 0 comes out at about the
-    // same brightness as the darkest block the old roll ever produced, and one
-    // at 0.95 at about the lightest. They are meant to be nudged — a look that
-    // is nearly right is one constant away from right, which is the whole reason
-    // they live in one table instead of being scattered through the levels.
+    // The values were picked on the bench in design mode and read off its own
+    // readout rather than guessed — which is the whole point of that readout
+    // printing the numbers. They are meant to be nudged: a look that is nearly
+    // right is one constant away from right, and that is the reason they live in
+    // one table instead of being scattered through the levels.
     static readonly Definition[] All =
     {
-        new Definition(BlockMaterial.Polymer, Stipple, 0.95f),  // Chalk
-        new Definition(BlockMaterial.Polymer, Pebble, 0.50f),   // Ash
-        new Definition(BlockMaterial.Polymer, Crumb, 0.08f),    // Basalt
+        new Definition(BlockMaterial.Polymer, Stipple, 0.95f),   // Chalk
+        new Definition(BlockMaterial.Polymer, Pebble, 0.50f),    // Ash
+        new Definition(BlockMaterial.Polymer, Crumb, 0.08f),     // Basalt
+        new Definition(BlockMaterial.Ceramics, Vein, 0.90f),     // Porcelain
+        new Definition(BlockMaterial.Ceramics, Crackle, 0.35f),  // Craze
+        new Definition(BlockMaterial.Ceramics, Cloudy, 0.10f),   // Slate
     };
 
     public static int Count => All.Length;
@@ -87,10 +112,10 @@ public static class BlockDesigns
 
     public static string NameOf(BlockDesign design) => design.ToString();
 
-    // The designs a material has, in enum order. Polymer has three and every
-    // other material has none, which is not a gap to be filled but the same
-    // ordinary case `VarietyOf` already answers null for: no design means the
-    // block rolls, exactly as it did before any of this existed.
+    // Whether a material has any designs at all. Polymer and Ceramics have three
+    // each and every other material has none, which is not a gap to be filled
+    // but the same ordinary case `VarietyOf` already answers null for: no design
+    // means the block rolls, exactly as it did before any of this existed.
     public static bool HasAny(BlockMaterial material)
     {
         foreach (var definition in All)
@@ -118,10 +143,17 @@ public static class BlockDesigns
         // Offset by the column as well as the row so a board that is one column
         // per material does not give every block in that column the same look.
         int index = ((row + column) % count + count) % count;
-        // The designs of one material are contiguous in `All` while Polymer is
-        // the only material with any; the first of them is where its run starts.
+        // Counted off among this material's own designs rather than added to
+        // where its run starts. The first version did the latter, which was only
+        // correct because Polymer's three were the whole table; a second
+        // material's designs made "contiguous in `All`" an invariant nobody had
+        // written down, and this owes nothing to the order they are declared in.
         for (int i = 0; i < All.Length; i++)
-            if (All[i].Material == material) return (BlockDesign)(i + index);
+        {
+            if (All[i].Material != material) continue;
+            if (index == 0) return (BlockDesign)i;
+            index--;
+        }
         return BlockDesign.Chalk;
     }
 }

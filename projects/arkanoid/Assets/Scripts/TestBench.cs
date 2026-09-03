@@ -344,10 +344,18 @@ public class TestBench : MonoBehaviour
         // value into the dials, so the next J or U carries on from where that
         // design stands — a named look is a starting point as much as it is an
         // answer.
+        //
+        // **And it switches the material with them**, which it did not have to
+        // while Polymer owned every design. A design names its material as much
+        // as its grain does — the grain is an *index* into that material's own
+        // grains — so walking to a Ceramics design with Polymer standing used to
+        // hand a ceramic's grain number to the plastic and show a look that is
+        // in no table anywhere.
         if (keyboard.oKey.wasPressedThisFrame && BlockDesigns.Count > 0)
         {
             namedDesign = (namedDesign + 1) % BlockDesigns.Count;
             var definition = BlockDesigns.Of((BlockDesign)namedDesign);
+            material = (int)definition.Material;
             designGrain = definition.Grain;
             designT = definition.Value;
             Rebuild();
