@@ -70,6 +70,20 @@ public static class BlockMaterials
         _ => new BlockMaterialTraits(1),
     };
 
+    // Whether a hit takes a flake out of the block's face as well as crazing
+    // it. It is a fact about the substance rather than about the damage: a
+    // fired glaze is brittle and thin over a body of another colour, so a ball
+    // landing on it spalls a piece off and leaves the pale bisque showing,
+    // where a moulded plastic dents and crazes and loses nothing. Ceramics is
+    // the only one so far, and a second brittle material — Crystal is the
+    // obvious candidate — is one more case here and nothing else.
+    //
+    // Chips are drawn *as well as* the crack net, not instead of it: a crazed
+    // glaze with a chip out of the point of impact is what the reference
+    // shows, and the net is what carries how far gone the block is (see
+    // Brick.Chip and "A ceramic chips where it was hit" in CLAUDE.md).
+    public static bool Chips(BlockMaterial material) => material == BlockMaterial.Ceramics;
+
     // How many materials there are, for the array of assets GameManager holds
     // and the setup stage that fills it.
     public const int Count = (int)BlockMaterial.Neutronium + 1;

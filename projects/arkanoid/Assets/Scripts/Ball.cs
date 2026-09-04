@@ -764,15 +764,20 @@ public class Ball : MonoBehaviour
     // heading it met the block with. Its *speed* is not restored with it —
     // FixedUpdate renormalizes to `Speed` every step and `Speed` has just come
     // down — so what carries on is the line and not the pace.
-    bool Punch(Collider2D hit)
+    //
+    // It takes the whole contact rather than the collider it is on because the
+    // block wants to know *where* it was hit as well as how hard: a material
+    // that chips puts the flake at that point (see Brick.Chip). Contact 0 is
+    // the same one the bounce below is worked out from.
+    bool Punch(Collision2D collision)
     {
-        var brick = hit.GetComponent<Brick>();
+        var brick = collision.collider.GetComponent<Brick>();
         if (brick == null) return false;
 
         // Read before the hit: a broken block is on its way out, and asking a
         // corpse how hard it was is asking for trouble.
         float hardness = brick.Hardness;
-        if (!brick.TakeDamage(Damage)) return false;
+        if (!brick.TakeDamage(Damage, collision.GetContact(0).point)) return false;
 
         punch = Mathf.Max(0f, punch - hardness);
         if (punch < PunchFloor) punch = 0f;
@@ -805,7 +810,7 @@ public class Ball : MonoBehaviour
         // A block is hit before any of the bounce is worked out, because
         // whether there is a bounce at all is one of the things the hit
         // decides.
-        if (Punch(collision.collider)) return;
+        if (Punch(collision)) return;
 
         // And it breaks the wake, for the same reason and in the same place:
         // everything below can return early, and every contact there is turns

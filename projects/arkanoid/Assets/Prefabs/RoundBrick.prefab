@@ -161,6 +161,11 @@ MonoBehaviour:
   - {fileID: 21300000, guid: dc65914511afc473ba43ba5a39036603, type: 3}
   - {fileID: 21300000, guid: de5f09120b4b74fb49e116413cd3b0cc, type: 3}
   - {fileID: 21300000, guid: cf3546e3831eb440e81d41b2e855f9a6, type: 3}
+  chipSprites:
+  - {fileID: 21300000, guid: fe9716ce095d34dff9c87be824f4cb27, type: 3}
+  - {fileID: 21300000, guid: 9b5f647048d7b4423876b77aeca5f859, type: 3}
+  - {fileID: 21300000, guid: e3ba7c4bba1d84cd6bf33f93d4aabfa2, type: 3}
+  - {fileID: 21300000, guid: 1805ddbd28a394ad1967dc44c5f250be, type: 3}
 --- !u!1 &5176817693028848083
 GameObject:
   m_ObjectHideFlags: 0

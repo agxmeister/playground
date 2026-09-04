@@ -568,12 +568,34 @@ public class TestBench : MonoBehaviour
     // TakeDamage the ball calls, so what is shown is the wear the game would
     // actually show rather than a crack sprite set by hand. An unbreakable
     // material refuses it and stays clean, which is itself worth seeing.
+    //
+    // Each block is handed a point on its own outline as the place it was hit,
+    // because that is the only kind of point a ball can ever hand over — every
+    // contact in a 2D game lands on the silhouette — and a material that chips
+    // puts its flake there (see Brick.Chip). Random per block and per press,
+    // so a row of blocks damaged together comes out chipped in as many
+    // different places as a row hit one at a time would be.
     void Damage()
     {
         if (blockHolder == null) return;
         damageSteps++;
         foreach (var block in blockHolder.GetComponentsInChildren<Brick>())
-            block.TakeDamage(block.Hardness * DamageStep);
+            block.TakeDamage(block.Hardness * DamageStep, OutlinePoint(block));
+    }
+
+    // A random point on the block's own bounding outline: a side picked at
+    // random, then a place along it.
+    static Vector2 OutlinePoint(Brick block)
+    {
+        var renderer = block.GetComponent<Renderer>();
+        if (renderer == null) return block.transform.position;
+        var bounds = renderer.bounds;
+        bool vertical = Random.value < 0.5f;
+        float along = Random.Range(-0.5f, 0.5f);
+        float side = Random.value < 0.5f ? -0.5f : 0.5f;
+        return vertical
+            ? new Vector2(bounds.center.x + along * bounds.size.x, bounds.center.y + side * bounds.size.y)
+            : new Vector2(bounds.center.x + side * bounds.size.x, bounds.center.y + along * bounds.size.y);
     }
 
     void ToggleBall()

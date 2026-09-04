@@ -241,6 +241,21 @@ public static class ArkanoidSetup
     // already a third of the net rather than a single cell: one cell of
     // craquelure at this size reads as a speck, not as damage.
     static readonly float[] CrackStageShares = { 0.34f, 0.58f, 0.80f, 1f };
+
+    // The chip decals: a flake of glaze gone at the point of impact, for the
+    // materials brittle enough to lose one (see BlockMaterials.Chips). Four
+    // shapes rather than four stages — a chip is one event at one place, and
+    // Brick picks a shape per hit and turns it at a random angle, so four is
+    // already more distinct chips than a block lives long enough to show.
+    const int ChipVariantCount = 4;
+    // 32 px at 32 pixels per unit, so a chip sprite is one world unit before
+    // Brick scales it down to ChipSize. A quarter of the crack net's 128, and
+    // for the same reason the net is 128: the texture is sized to the pixels
+    // it is actually drawn across. A block is about 130 px wide on a 1080p
+    // screen and a chip is a sixth of a unit, so a chip lands on some 15 px —
+    // and these sprites are imported without mipmaps, so a texture far over
+    // that size is minified detail turning into sparkle rather than detail.
+    const int ChipTextureSize = 32;
     const string BouncyMaterialPath = PhysicsFolder + "/Bouncy.physicsMaterial2D";
     const string BallPrefabPath = PrefabsFolder + "/Ball.prefab";
     const string BrickPrefabPath = PrefabsFolder + "/Brick.prefab";
@@ -2691,6 +2706,56 @@ public static class ArkanoidSetup
             Debug.Log($"[ArkanoidSetup] Stage 104: set the key light's shadow strength to {KeyShadowStrength} and queued a scene save.");
             return;
         }
+
+        // Stage 105: the chip decals on disk — one PNG per variant shape (see
+        // WriteChipTextures). Retuning them is the same recipe the crack net is
+        // retuned by: delete Assets/Sprites/Chip*.png, keep the .meta files so
+        // the guids the block prefabs hold survive, and let this write them
+        // again.
+        bool chipTexturesMissing = false;
+        for (int variant = 0; variant < ChipVariantCount; variant++)
+            chipTexturesMissing |= !File.Exists(ToAbsolute(ChipTexturePath(variant)));
+        if (chipTexturesMissing)
+        {
+            WriteChipTextures();
+            AssetDatabase.Refresh();
+            Debug.Log($"[ArkanoidSetup] Stage 105: wrote {ChipVariantCount} chip decals.");
+            return;
+        }
+
+        // Stage 106: import them as 1-unit sprites, for the same reason the
+        // crack net is imported that way — Brick scales a chip to the size it
+        // wants in world units, which only works if the sprite's own size is
+        // one.
+        bool chipsImported = true;
+        for (int variant = 0; variant < ChipVariantCount; variant++)
+            chipsImported &= ConfigureSpriteImporter(ChipTexturePath(variant), ChipTextureSize);
+        if (!chipsImported)
+        {
+            Debug.Log("[ArkanoidSetup] Stage 106: configured the chip sprite importers.");
+            return;
+        }
+
+        // Stage 107: hand the chips to every block prefab. There is no child to
+        // add and no prefab hierarchy to change — a chip is created at runtime
+        // where the ball landed, so all a prefab carries is the bag of shapes
+        // to pick from. Which is also why the four prefab builders are left
+        // alone: this stage stands after the one that creates them, so a
+        // from-scratch run reaches it with all four standing and wires them
+        // here, and there is no second path to keep in step.
+        var chipless = BlockPrefabsMissingChips();
+        if (chipless.Count > 0)
+        {
+            var chips = LoadChipSprites();
+            if (chips == null)
+            {
+                Debug.Log("[ArkanoidSetup] Chip sprites not importable yet, waiting for next reload.");
+                return;
+            }
+            foreach (var prefabPath in chipless) WireChipSpritesIntoPrefab(prefabPath, chips);
+            Debug.Log($"[ArkanoidSetup] Stage 107: wired the chip decals into {chipless.Count} block prefab(s).");
+            return;
+        }
     }
 
     // A cubemap of one colour on all six faces. Small on purpose: the shader
@@ -3668,6 +3733,281 @@ public static class ArkanoidSetup
     }
 
 
+    static string ChipTexturePath(int variant) => SpritesFolder + "/Chip" + variant + ".png";
+
+    // How much of the texture the flake itself spans, as a share of its width,
+    // and how far its corners wander off that. The rest of the texture is the
+    // room the splinters around it need.
+    const float ChipFlakeRadius = 0.27f;
+    const float ChipRadiusJitter = 0.34f;
+
+    // How many corners a flake has, and how far each one may slide round the
+    // circle from its even share of it. Eight straight facets rather than a
+    // smooth outline, because that is how a glaze actually lets go: a fired
+    // surface fractures in flats and corners, and an outline drawn as a
+    // wandering radius comes out as a droplet — which was the first version,
+    // and it read as a bead of water sitting on the block. The angle jitter is
+    // what stops the flats coming out all the same length.
+    const int ChipFacets = 8;
+    const float ChipAngleJitter = 0.40f;
+
+    // How far from round a flake is drawn, along an axis of its own: a share
+    // of every point's offset added back along that axis. A spall is longer
+    // one way than the other, and eight facets on a circle are still a circle.
+    const float ChipStretch = 0.30f;
+
+    // Four numbers make the flake a hollow rather than a blob, and all four are
+    // about where the light in this room does or does not reach. The key light
+    // comes down onto the field at LightPitch, so a pit is lit exactly one way:
+    // the wall at the top of it shades the floor beneath, the wall at the
+    // bottom faces up into the light, and the glaze's own broken edge is a hard
+    // line all the way round. That asymmetry is the whole of what makes a
+    // crater read as a crater on a photograph, and swapping it top for bottom
+    // is what makes one read as a dome.
+    //
+    // - `ChipFloor` is the exposed body itself: below the face it was taken
+    //   out of, because the floor of a hollow is a surface turned away from a
+    //   light that is nearly head-on.
+    // - `ChipUndercut` is what the floor loses directly under the break above
+    //   it, reaching `ChipUndercutPixels` down into the flake.
+    // - `ChipLip` is the far wall catching that light, within `ChipLipPixels`
+    //   of the outline below.
+    // - `ChipRimShade` is the break itself, a hairline of it — `ChipRimPixels`
+    //   wide, and no wider. This was a third of the flake's radius in the first
+    //   version, which left no flat floor at all, only one smooth ramp from
+    //   edge to middle: a smooth ramp is a dome, and four variants of it read
+    //   as four beads of water sitting on the block.
+    const float ChipFloor = 0.70f;
+    const float ChipUndercut = 0.30f;
+    const float ChipUndercutPixels = 5f;
+    const float ChipLip = 1f;
+    const float ChipLipPixels = 3f;
+    const float ChipRimShade = 0.30f;
+    const float ChipRimPixels = 1.3f;
+
+    // The scatter of much smaller flakes around the main one, thrown off the
+    // same impact. Without them a chip is one clean shape and reads as a
+    // sticker; with them the face is *damaged* around the place it was hit.
+    const int ChipSplinters = 5;
+    const float ChipSplinterNear = 1.15f;
+    const float ChipSplinterFar = 1.45f;
+    const float ChipSplinterSmallest = 0.12f;
+    const float ChipSplinterLargest = 0.28f;
+
+    // A ceramic loses a flake of glaze where it is struck, and that is a
+    // different kind of damage from the net the same hit crazes into it (see
+    // WriteCrackTextures): the net is a state the whole face is in, drawn once
+    // across the block and grown stage by stage, while a chip is one event at
+    // one place. So these are four *shapes* rather than four stages — Brick
+    // picks one per hit, turns it to a random angle and stamps it where the
+    // ball landed.
+    //
+    // **Written as pure shadow: black throughout, with the shading in the
+    // alpha.** A chip needs modelling the crack net does not — a dark broken
+    // rim, an undercut under the top edge, a lighter floor below it — and the
+    // first version carried that as grey in the RGB, tinted by the block's own
+    // colour. It came out *cold*: measured on the bench, a chip on a cream
+    // ceramic rendered (123,122,121) against a face of (253,225,192). The
+    // reason is worth keeping, because it is a fact about every unlit overlay
+    // in this project and not about chips: the warmth on that face is the
+    // *light*, not the albedo — the block is lit by the key light and the two
+    // fills, and a sprite is lit by nothing at all. So a sprite painted with
+    // the block's albedo is painted with a colour the block is never actually
+    // seen to be, and the bigger the patch of it, the worse that reads. The
+    // crack net gets away with it because a hairline is too thin to compare.
+    //
+    // Black at alpha `a` over a face leaves `face * (1 - a)`, so a texture
+    // written this way is a *multiply* on whatever the block is: it keeps the
+    // hue exactly, it keeps the light exactly, and it cannot come out brighter
+    // than the face by construction — which is the same conclusion
+    // Brick.CrackDarkness reaches from the other end (see "A crack is always
+    // darker, never lighter"). What it costs is that nothing in a chip can be
+    // *brighter* than the face either, so the lit far wall is drawn as the part
+    // that is barely darkened rather than as a highlight. Against the rim and
+    // the undercut beside it, that is still the brightest thing in the hollow.
+    static void WriteChipTextures()
+    {
+        for (int variant = 0; variant < ChipVariantCount; variant++)
+            WriteChipTexture(ChipTexturePath(variant), new System.Random(4096 + variant));
+    }
+
+    static void WriteChipTexture(string path, System.Random random)
+    {
+        float middle = ChipTextureSize * 0.5f;
+        float radius = ChipTextureSize * ChipFlakeRadius;
+
+        // The main flake first and the splinters after it, each with an outline
+        // of its own so no two of them are the same shape.
+        var flakes = new List<Vector2[]> { ChipFlake(random, new Vector2(middle, middle), radius) };
+        for (int i = 0; i < ChipSplinters; i++)
+        {
+            float angle = (float)(random.NextDouble() * Mathf.PI * 2.0);
+            float reach = radius * Mathf.Lerp(
+                ChipSplinterNear, ChipSplinterFar, (float)random.NextDouble());
+            float small = radius * Mathf.Lerp(
+                ChipSplinterSmallest, ChipSplinterLargest, (float)random.NextDouble());
+            flakes.Add(ChipFlake(
+                random,
+                new Vector2(middle + Mathf.Cos(angle) * reach, middle + Mathf.Sin(angle) * reach),
+                small));
+        }
+
+        var shading = new float[ChipTextureSize * ChipTextureSize];
+        var coverage = new float[ChipTextureSize * ChipTextureSize];
+        // Nothing is drawn where there is no flake, so the field starts as the
+        // face itself: a share of 1 is "leave this pixel alone".
+        for (int i = 0; i < shading.Length; i++) shading[i] = 1f;
+        foreach (var flake in flakes) StampFlake(shading, coverage, flake);
+
+        var texture = new Texture2D(ChipTextureSize, ChipTextureSize, TextureFormat.RGBA32, false);
+        for (int y = 0; y < ChipTextureSize; y++)
+            for (int x = 0; x < ChipTextureSize; x++)
+            {
+                int index = y * ChipTextureSize + x;
+                // Black at the alpha that leaves the wanted share of the face
+                // standing, and only across the flake itself. The share is
+                // raised to the gamma on the way in because the blend happens
+                // in *linear* space while every number above was chosen by
+                // eye: measured on the bench, a floor asked for at 0.70 came
+                // out at 0.89 of the face — a chip so faint it read as a
+                // smudge — because 0.7 of the linear value is 0.86 of the
+                // sRGB one. So the shading is a perceptual share and this is
+                // where it becomes a linear coverage.
+                float share = Mathf.Pow(Mathf.Clamp01(shading[index]), 2.2f);
+                texture.SetPixel(x, y, new Color(0f, 0f, 0f, (1f - share) * coverage[index]));
+            }
+
+        texture.Apply();
+        File.WriteAllBytes(ToAbsolute(path), texture.EncodeToPNG());
+        Object.DestroyImmediate(texture);
+    }
+
+    // One flake as a polygon: a corner per facet, each at a jittered angle and
+    // a jittered radius, then the whole thing stretched along an axis of its
+    // own. Wound counter-clockwise, which nothing downstream depends on but
+    // which keeps the debugging of it sane.
+    static Vector2[] ChipFlake(System.Random random, Vector2 middle, float radius)
+    {
+        float lean = (float)(random.NextDouble() * Mathf.PI);
+        var along = new Vector2(Mathf.Cos(lean), Mathf.Sin(lean));
+        float turn = (float)(random.NextDouble() * Mathf.PI * 2.0);
+
+        var flake = new Vector2[ChipFacets];
+        for (int i = 0; i < ChipFacets; i++)
+        {
+            float share = Mathf.PI * 2f / ChipFacets;
+            float angle = turn + share * (i + (float)(random.NextDouble() * 2 - 1) * ChipAngleJitter);
+            float reach = radius * (1f + (float)(random.NextDouble() * 2 - 1) * ChipRadiusJitter);
+            var offset = new Vector2(Mathf.Cos(angle) * reach, Mathf.Sin(angle) * reach);
+            float projected = offset.x * along.x + offset.y * along.y;
+            offset = new Vector2(
+                offset.x + along.x * projected * ChipStretch,
+                offset.y + along.y * projected * ChipStretch);
+            flake[i] = new Vector2(middle.x + offset.x, middle.y + offset.y);
+        }
+        return flake;
+    }
+
+    // One flake laid into the shading and coverage buffers — `shading` being
+    // the share of the face left standing at each pixel, and `coverage` how
+    // much of the pixel the flake covers at all. Coverage is full inside the
+    // outline and falls off across the last pixel of it, since the sprite is
+    // filtered onto the block and a hard edge would come back as a stepped
+    // one. Where two flakes overlap the more covered pixel wins.
+    static void StampFlake(float[] shading, float[] coverage, Vector2[] flake)
+    {
+        float left = float.MaxValue, right = float.MinValue;
+        float bottom = float.MaxValue, top = float.MinValue;
+        foreach (var corner in flake)
+        {
+            left = Mathf.Min(left, corner.x); right = Mathf.Max(right, corner.x);
+            bottom = Mathf.Min(bottom, corner.y); top = Mathf.Max(top, corner.y);
+        }
+
+        for (int y = Mathf.Max(0, Mathf.FloorToInt(bottom) - 1);
+            y <= Mathf.Min(ChipTextureSize - 1, Mathf.CeilToInt(top) + 1); y++)
+            for (int x = Mathf.Max(0, Mathf.FloorToInt(left) - 1);
+                x <= Mathf.Min(ChipTextureSize - 1, Mathf.CeilToInt(right) + 1); x++)
+            {
+                var point = new Vector2(x, y);
+                float distance = DistanceToOutline(flake, point);
+                float inward = Inside(flake, point) ? distance : -distance;
+                float alpha = Mathf.Clamp01(inward + 0.5f);
+                if (alpha <= 0f) continue;
+
+                // The floor of the hollow, then the three things that are
+                // brighter or darker than it, in the order light reaches them.
+                float shade = ChipFloor;
+                // The far wall, facing up into the key light.
+                float below = DistanceAlongY(flake, point, -1, ChipLipPixels);
+                shade = Mathf.Lerp(ChipLip, shade, Mathf.Clamp01(below / ChipLipPixels));
+                // The undercut: how far above this pixel the glaze breaks.
+                float above = DistanceAlongY(flake, point, 1, ChipUndercutPixels);
+                shade *= Mathf.Lerp(ChipUndercut, 1f, Mathf.Clamp01(above / ChipUndercutPixels));
+                // And the break itself, a hairline round the whole outline.
+                shade *= Mathf.Lerp(ChipRimShade, 1f, Mathf.Clamp01(inward / ChipRimPixels));
+
+                int index = y * ChipTextureSize + x;
+                if (alpha < coverage[index]) continue;
+                coverage[index] = alpha;
+                shading[index] = shade;
+            }
+    }
+
+    // Whether a point is inside the polygon, by counting the crossings of a
+    // ray cast out of it.
+    static bool Inside(Vector2[] flake, Vector2 point)
+    {
+        bool inside = false;
+        for (int i = 0, j = flake.Length - 1; i < flake.Length; j = i++)
+        {
+            if (flake[i].y > point.y == flake[j].y > point.y) continue;
+            float crossing = flake[j].x
+                + (point.y - flake[j].y) / (flake[i].y - flake[j].y) * (flake[i].x - flake[j].x);
+            if (point.x < crossing) inside = !inside;
+        }
+        return inside;
+    }
+
+    // How far the point is from the nearest facet, inside or out.
+    static float DistanceToOutline(Vector2[] flake, Vector2 point)
+    {
+        float nearest = float.MaxValue;
+        for (int i = 0, j = flake.Length - 1; i < flake.Length; j = i++)
+        {
+            var along = new Vector2(flake[i].x - flake[j].x, flake[i].y - flake[j].y);
+            float length = along.x * along.x + along.y * along.y;
+            var offset = new Vector2(point.x - flake[j].x, point.y - flake[j].y);
+            float share = length > 0f
+                ? Mathf.Clamp01((offset.x * along.x + offset.y * along.y) / length) : 0f;
+            var to = new Vector2(offset.x - along.x * share, offset.y - along.y * share);
+            nearest = Mathf.Min(nearest, to.magnitude);
+        }
+        return nearest;
+    }
+
+    // How far the outline is from the point straight up (`direction` 1) or
+    // straight down (-1), or `reach` when the ray leaves the flake without
+    // meeting it again — a pixel with nothing over it is a pixel in the open,
+    // and the shading above is written so that `reach` means "no wall here".
+    // Casting the ray against the outline rather than measuring off the
+    // bounding box is what keeps the shadow the shape of the break: an outline
+    // that dips low shades the floor further down.
+    static float DistanceAlongY(Vector2[] flake, Vector2 point, int direction, float reach)
+    {
+        float nearest = reach;
+        for (int i = 0, j = flake.Length - 1; i < flake.Length; j = i++)
+        {
+            if (flake[i].x > point.x == flake[j].x > point.x) continue;
+            float share = (point.x - flake[j].x) / (flake[i].x - flake[j].x);
+            float crossing = flake[j].y + share * (flake[i].y - flake[j].y);
+            float away = (crossing - point.y) * direction;
+            if (away > 0f) nearest = Mathf.Min(nearest, away);
+        }
+        return nearest;
+    }
+
+
     // Returns true when the texture is already imported as a 1-unit sprite.
     static bool ConfigureSpriteImporter(string path, int pixelsPerUnit)
     {
@@ -3851,6 +4191,67 @@ public static class ArkanoidSetup
         var root = PrefabUtility.LoadPrefabContents(prefabPath);
         var so = new SerializedObject(root.GetComponent<Brick>());
         SetObjectArray(so, "crackSprites", cracks);
+        so.ApplyModifiedPropertiesWithoutUndo();
+        PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+        PrefabUtility.UnloadPrefabContents(root);
+        AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceUpdate);
+    }
+
+    // The four chip shapes, or null while any one of them is still
+    // unimportable — same rule as the crack net: a prefab wired around a hole
+    // would hand Brick a null sprite to stamp on a hit.
+    static Sprite[] LoadChipSprites()
+    {
+        var sprites = new Sprite[ChipVariantCount];
+        for (int variant = 0; variant < ChipVariantCount; variant++)
+        {
+            var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(ChipTexturePath(variant));
+            if (sprite == null) return null;
+            sprites[variant] = sprite;
+        }
+        return sprites;
+    }
+
+    // Which block prefabs are not carrying the current set of chips. The count
+    // is not enough on its own here, the way it is for the net: stage 105
+    // rewrites the PNGs at the paths these prefabs already point at, and a
+    // rewrite over a referenced path destroys the object the import was
+    // holding — so a prefab can be left with an array of the right length full
+    // of nulls. Reading the entries is what makes this the repair as well as
+    // the check.
+    static List<string> BlockPrefabsMissingChips()
+    {
+        var stale = new List<string>();
+        foreach (var path in new[]
+            { BrickPrefabPath, HalfBrickPrefabPath, RoundedBrickPrefabPath, RoundBrickPrefabPath })
+        {
+            var root = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            var brick = root != null ? root.GetComponent<Brick>() : null;
+            if (brick == null) continue;
+            var chips = new SerializedObject(brick).FindProperty("chipSprites");
+            if (chips.arraySize != ChipVariantCount)
+            {
+                stale.Add(path);
+                continue;
+            }
+            for (int i = 0; i < chips.arraySize; i++)
+                if (chips.GetArrayElementAtIndex(i).objectReferenceValue == null)
+                {
+                    stale.Add(path);
+                    break;
+                }
+        }
+        return stale;
+    }
+
+    // The forced reimport at the end is not optional, for the reason
+    // WireCrackSpritesIntoPrefab gives: SaveAsPrefabAsset writes the file and
+    // Instantiate serves the *imported* copy.
+    static void WireChipSpritesIntoPrefab(string prefabPath, Sprite[] chips)
+    {
+        var root = PrefabUtility.LoadPrefabContents(prefabPath);
+        var so = new SerializedObject(root.GetComponent<Brick>());
+        SetObjectArray(so, "chipSprites", chips);
         so.ApplyModifiedPropertiesWithoutUndo();
         PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
         PrefabUtility.UnloadPrefabContents(root);
