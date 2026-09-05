@@ -45,35 +45,21 @@ public class Debris : MonoBehaviour
     public static void Spawn(Vector3 origin, Vector3 brickSize, Color color, Material material,
         float amount = 1f, Paddle catcher = null)
     {
-        colorBlock ??= new MaterialPropertyBlock();
         int count = Mathf.Max(1, Mathf.RoundToInt(Random.Range(6, 10) * amount));
         for (int i = 0; i < count; i++)
         {
-            var fragment = new GameObject("Debris");
-            fragment.AddComponent<MeshFilter>().sharedMesh = CubeMesh;
-            var renderer = fragment.AddComponent<MeshRenderer>();
-            renderer.sharedMaterial = material;
-
-            // Per-fragment brightness variation makes the pile read as broken
-            // chunks rather than uniform confetti.
-            float shade = Random.Range(0.7f, 1.05f);
-            colorBlock.SetColor("_BaseColor", new Color(color.r * shade, color.g * shade, color.b * shade, color.a));
-            renderer.SetPropertyBlock(colorBlock);
-
             var offset = new Vector3(
                 Random.Range(-0.4f, 0.4f) * brickSize.x,
                 Random.Range(-0.4f, 0.4f) * brickSize.y,
                 0f);
-            fragment.transform.position = origin + offset;
-            fragment.transform.rotation = Random.rotation;
 
             float chunk = Mathf.Min(brickSize.x, brickSize.y);
-            fragment.transform.localScale = new Vector3(
+            var scale = new Vector3(
                 Random.Range(0.15f, 0.35f),
                 Random.Range(0.15f, 0.35f),
                 Random.Range(0.15f, 0.35f)) * chunk;
 
-            var debris = fragment.AddComponent<Debris>();
+            var debris = Fragment(origin + offset, scale, color, material);
             debris.catcher = catcher;
             debris.velocity = new Vector3(
                 offset.x * Random.Range(2f, 5f),
@@ -88,9 +74,89 @@ public class Debris : MonoBehaviour
             // Rubble that can be caught lives until it is, or until it has
             // plainly fallen past the paddle; only scenery is on a timer.
             debris.life = catcher != null ? Mathf.Infinity : Random.Range(1.2f, 2f);
-            debris.baseScale = fragment.transform.localScale;
-            debris.previous = fragment.transform.position;
         }
+    }
+
+    // How many pieces come off a chip, and how big each is as a share of the
+    // hollow the decal draws. Two or three, so what falls is *the flake* —
+    // this is one piece of glaze breaking away, not the block coming apart,
+    // and a handful of confetti off every hit would read as the second.
+    const int ChipPiecesFewest = 2;
+    const int ChipPiecesMost = 4;
+    const float ChipPieceSmallest = 0.45f;
+    const float ChipPieceLargest = 1f;
+
+    // How the flake leaves: thrown out along the way the ball came in, kicked
+    // up a little because it was struck rather than dropped, and pushed toward
+    // the camera so it falls in *front* of the wall instead of down its face —
+    // the blocks stand in a plane and a piece sliding down inside it would
+    // disappear behind the block below.
+    const float ChipToss = 1.8f;
+    const float ChipLift = 1.2f;
+    const float ChipForward = 1.1f;
+
+    // How long a piece is in the air. Measured on the bench: at this gravity a
+    // piece is five units below the block it came off within a second, which is
+    // the height of the field — so the whole of what this number buys is
+    // whether the flake is still on screen when the eye gets to it. Shorter and
+    // it is a flicker at the point of impact; much longer and the ball is
+    // hitting the next block while the last one is still shedding.
+    const float ChipLifeShortest = 1f;
+    const float ChipLifeLongest = 1.6f;
+
+    // What a chipped block actually loses: two or three pieces of its own
+    // face, thrown off where the ball landed and falling out of the round.
+    // Scenery by construction — no catcher is taken, because a block chips on
+    // every hit it survives and rubble worth points off every one of those
+    // would pay a player for not breaking anything (see Brick.Chip).
+    //
+    // `size` is the decal's own size, so the pieces are the size of the hole
+    // they came out of; `away` is the direction out of the block through the
+    // point that was struck, which is the whole of where they go.
+    public static void Chip(Vector3 at, Vector2 away, float size, Color color, Material material)
+    {
+        int count = Random.Range(ChipPiecesFewest, ChipPiecesMost);
+        for (int i = 0; i < count; i++)
+        {
+            var scale = Vector3.one * (size * Random.Range(ChipPieceSmallest, ChipPieceLargest));
+            var debris = Fragment(at, scale, color, material);
+            debris.velocity = new Vector3(
+                away.x * ChipToss * Random.Range(0.4f, 1.3f) + Random.Range(-0.3f, 0.3f),
+                away.y * ChipToss * Random.Range(0.2f, 0.8f) + Random.Range(0.2f, 1f) * ChipLift,
+                -Random.Range(0.3f, 1f) * ChipForward);
+            debris.spinAxis = Random.onUnitSphere;
+            debris.spinSpeed = Random.Range(180f, 720f);
+            debris.life = Random.Range(ChipLifeShortest, ChipLifeLongest);
+        }
+    }
+
+    // One fragment, however it was thrown: the mesh, the material, the shade
+    // and the place. What it does next — how fast, how long, whether it can be
+    // caught — belongs to the caller, and is the only thing the two kinds of
+    // rubble disagree about.
+    static Debris Fragment(Vector3 position, Vector3 scale, Color color, Material material)
+    {
+        colorBlock ??= new MaterialPropertyBlock();
+
+        var fragment = new GameObject("Debris");
+        fragment.AddComponent<MeshFilter>().sharedMesh = CubeMesh;
+        var renderer = fragment.AddComponent<MeshRenderer>();
+        renderer.sharedMaterial = material;
+
+        // Per-fragment brightness variation makes the pile read as broken
+        // chunks rather than uniform confetti.
+        float shade = Random.Range(0.7f, 1.05f);
+        colorBlock.SetColor("_BaseColor", new Color(color.r * shade, color.g * shade, color.b * shade, color.a));
+        renderer.SetPropertyBlock(colorBlock);
+
+        fragment.transform.position = position;
+        fragment.transform.rotation = Random.rotation;
+        fragment.transform.localScale = scale;
+
+        var debris = fragment.AddComponent<Debris>();
+        debris.baseScale = scale;
+        debris.previous = position;
+        return debris;
     }
 
     // Sweeps away every fragment still in the air. Fragments are unparented

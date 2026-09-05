@@ -360,6 +360,17 @@ public class Brick : MonoBehaviour
         renderer.sortingOrder = crackRenderer.sortingOrder + 1;
         renderer.color = ChipTint();
         chipsShown++;
+
+        // And the flake itself, which is the other half of the same event: the
+        // decal is the hollow left behind, this is the piece that came out of
+        // it, thrown out of the block through the point that was struck and
+        // falling out of the round. Scenery only — see Debris.Chip for why it
+        // is never worth catching. The pieces are the block's own colour, the
+        // same one its rubble is (see Break), so a chip off a dark casting and
+        // a chip off a pale one drop different debris.
+        var away = offset.sqrMagnitude > 0.000001f ? offset.normalized : Vector2.up;
+        Debris.Chip(chip.transform.position, away, size,
+            faceColor.linear, GetComponent<MeshRenderer>().sharedMaterial);
     }
 
     // A chip is drawn in no colour of its own: black, at ChipStrength of the
