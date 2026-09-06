@@ -496,6 +496,22 @@ public class GameManager : MonoBehaviour
     {
         if (keyboard == null || testBench == null) return;
 
+        // One key that also opens it, and it exists for the same reason `Q`
+        // exists inside the bench: a door only a *person* can open is a door
+        // that traps whatever is driving the game from outside. The word is
+        // intermittent under scripted input — measured across a dozen attempts
+        // in one session, several in a row simply not opening while every
+        // keypress reported delivered — and the cause is still not known (see
+        // "Known problem" in CLAUDE.md). A digit is free on the menu, where the
+        // arrows, SPACE and the letters are all spoken for, so this takes
+        // nothing away from anything. BENCH stays: it is the one a person types.
+        if (keyboard.digit0Key.wasPressedThisFrame)
+        {
+            benchProgress = 0;
+            OpenBench();
+            return;
+        }
+
         // Advanced in a *loop* rather than one letter per frame, because more
         // than one letter can arrive in the same frame and that is the normal
         // case rather than the exotic one: an unfocused Editor runs at about ten

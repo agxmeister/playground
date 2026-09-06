@@ -24,6 +24,12 @@ public class Debris : MonoBehaviour
     static MaterialPropertyBlock colorBlock;
 
     Vector3 velocity;
+    // What share of the common gravity this fragment falls under. A chip of
+    // grit and a third of a block are both "rubble" and neither is being
+    // simulated, so this is a *reading* rather than physics: a piece the size
+    // of a block face wants to be watched coming away, and at full gravity it
+    // has crossed the height of the field before the eye has found it.
+    float weight = 1f;
     Vector3 spinAxis;
     float spinSpeed;
     float life;
@@ -36,6 +42,10 @@ public class Debris : MonoBehaviour
     // Where the fragment was last frame, so a fast one can't fall straight
     // through the paddle between two positions either side of it.
     Vector3 previous;
+    // A piece of a block brings its own mesh with it (see Piece). Nothing else
+    // will free it — a Mesh is unmanaged and the cube every other fragment uses
+    // is shared — so the piece owns it and destroys it on the way out.
+    Mesh own;
 
     // `amount` scales the fragment count for casters bigger than a brick — a
     // menu slab four bricks wide would otherwise break into the same handful of
@@ -130,6 +140,61 @@ public class Debris : MonoBehaviour
         }
     }
 
+    // How a piece of a block leaves it: pushed out along the way the ball came
+    // in, and turning slowly rather than tumbling, because a piece of a slab is
+    // a *slab* — a chunk that spins like a pebble reads as gravel, and what
+    // this is meant to read as is the block coming apart.
+    const float PieceToss = 1.1f;
+    const float PieceLift = 0.9f;
+    const float PieceForward = 0.5f;
+    const float PieceSpinSlowest = 25f;
+    const float PieceSpinFastest = 110f;
+    const float PieceWeight = 0.55f;
+
+    // A piece of a block, falling: its own geometry rather than a cube, put
+    // where it stood and turned about itself, so what leaves the wall is
+    // exactly the shape the wall is now missing.
+    //
+    // `catcher` is handed over for the pieces a *broken* block throws, which
+    // are its rubble and worth points like any other; the pieces shed by a hit
+    // the block survived carry none, for the reason Chip gives — a block that
+    // paid a player for every hit it took would pay for not breaking it.
+    public static void Piece(
+        Mesh mesh, Vector3 position, Quaternion rotation, Vector3 scale, Vector2 away,
+        Color color, Material material, Paddle catcher = null)
+    {
+        colorBlock ??= new MaterialPropertyBlock();
+
+        var piece = new GameObject("BlockPiece");
+        piece.transform.SetPositionAndRotation(position, rotation);
+        piece.transform.localScale = scale;
+        piece.AddComponent<MeshFilter>().sharedMesh = mesh;
+        var renderer = piece.AddComponent<MeshRenderer>();
+        renderer.sharedMaterial = material;
+        // The face a piece shows is the face the block was showing, grain and
+        // all — it is the same surface, so it keeps the same colour rather than
+        // taking the per-fragment shade the cube rubble varies itself with.
+        colorBlock.SetColor("_BaseColor", color);
+        renderer.SetPropertyBlock(colorBlock);
+
+        var debris = piece.AddComponent<Debris>();
+        debris.own = mesh;
+        debris.catcher = catcher;
+        debris.velocity = new Vector3(
+            away.x * PieceToss * Random.Range(0.5f, 1.4f),
+            away.y * PieceToss * Random.Range(0.2f, 0.8f) + Random.Range(0.3f, 1f) * PieceLift,
+            catcher != null ? 0f : -Random.Range(0.2f, 1f) * PieceForward);
+        // Turned about the view axis alone: the piece is seen face-on and a
+        // slab that rolled over would show its unlit back to the camera.
+        debris.spinAxis = Vector3.forward;
+        debris.spinSpeed = Random.Range(PieceSpinSlowest, PieceSpinFastest)
+            * (Random.value < 0.5f ? -1f : 1f);
+        debris.weight = PieceWeight;
+        debris.life = catcher != null ? Mathf.Infinity : Random.Range(1.4f, 2.2f);
+        debris.baseScale = scale;
+        debris.previous = position;
+    }
+
     // One fragment, however it was thrown: the mesh, the material, the shade
     // and the place. What it does next — how fast, how long, whether it can be
     // caught — belongs to the caller, and is the only thing the two kinds of
@@ -185,6 +250,11 @@ public class Debris : MonoBehaviour
         }
     }
 
+    void OnDestroy()
+    {
+        if (own != null) Destroy(own);
+    }
+
     void Update()
     {
         age += Time.deltaTime;
@@ -194,7 +264,7 @@ public class Debris : MonoBehaviour
             return;
         }
 
-        velocity.y -= Gravity * Time.deltaTime;
+        velocity.y -= Gravity * weight * Time.deltaTime;
         previous = transform.position;
         transform.position += velocity * Time.deltaTime;
         transform.Rotate(spinAxis, spinSpeed * Time.deltaTime, Space.World);

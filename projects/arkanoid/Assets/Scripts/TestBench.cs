@@ -292,6 +292,13 @@ public class TestBench : MonoBehaviour
         // undone — there is no un-break, and a rebuild is honest about that.
         if (keyboard.fKey.wasPressedThisFrame) Rebuild();
         if (keyboard.gKey.wasPressedThisFrame) Damage();
+        // Y hides the crack *overlay* and leaves the crack *geometry*, which is
+        // the only way to answer whether the sprite is still earning its place
+        // now that the net is cut into the face for real (see "A block cracks
+        // in a net of its own colour" against "A block is carved where it
+        // cracks"). It is a comparison, not a setting: the game always draws
+        // both, and this is here to be looked through on the bench.
+        if (keyboard.yKey.wasPressedThisFrame) ToggleCrackOverlay();
         ReadDesignKeys(keyboard);
         if (keyboard.bKey.wasPressedThisFrame) ToggleBall();
         if (keyboard.pKey.wasPressedThisFrame) TogglePaddle();
@@ -562,6 +569,7 @@ public class TestBench : MonoBehaviour
         block.SetLook(designing
             ? variety.Compose(designGrain, designT, GameManager.GrainTilesPerUnit)
             : variety.Roll(GameManager.GrainTilesPerUnit));
+        ApplyCrackOverlay();
     }
 
     // A fifth of every block's hardness at a time, applied through the same
@@ -596,6 +604,25 @@ public class TestBench : MonoBehaviour
         return vertical
             ? new Vector2(bounds.center.x + along * bounds.size.x, bounds.center.y + side * bounds.size.y)
             : new Vector2(bounds.center.x + side * bounds.size.x, bounds.center.y + along * bounds.size.y);
+    }
+
+    // Whether the sprite net is being drawn over the carved one. Blocks spawned
+    // after it is switched off come up without it too, so the answer holds
+    // across an F rebuild rather than only for the blocks standing when it was
+    // pressed.
+    bool overlayHidden;
+
+    void ToggleCrackOverlay()
+    {
+        overlayHidden = !overlayHidden;
+        ApplyCrackOverlay();
+    }
+
+    void ApplyCrackOverlay()
+    {
+        if (blockHolder == null) return;
+        foreach (var block in blockHolder.GetComponentsInChildren<SpriteRenderer>(true))
+            if (block.gameObject.name == "Cracks") block.enabled = !overlayHidden;
     }
 
     void ToggleBall()
@@ -759,6 +786,7 @@ public class TestBench : MonoBehaviour
         var text = $"TEST BENCH\n{shapeName}  |  {kind}  {hardness}"
             + DesignLine(kind)
             + $"\ncount {count}   seed {seed}   damage {damageSteps} x {DamageStep:0.00}"
+            + (overlayHidden ? "   crack overlay off" : "   crack overlay on")
             + $"\nball {(ball != null ? "on" : "off")}   paddle {(paddle != null ? "on" : "off")}"
             // The paddle's own numbers, because the mechanics it carries are
             // invisible until they fire: a charge that is not filling and a

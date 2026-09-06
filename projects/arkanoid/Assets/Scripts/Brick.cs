@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 public class Brick : MonoBehaviour
@@ -21,6 +22,16 @@ public class Brick : MonoBehaviour
     // is what the cube-UV trap costs if it is skipped: the same texture reading
     // as pebbles on the slab and as stripes on the half-block.
     [SerializeField] Vector2 grainUvPerUnit = Vector2.one;
+
+    // What the damage carver needs to know about this shape's outline, both
+    // authored per prefab because neither can be read off a mesh with any
+    // confidence. The radius is in world units and is zero for a square block;
+    // `carvesDamage` is off for the round block alone, whose face is a sphere
+    // rather than a flat slab and whose UVs are the stock sphere's rather than
+    // this project's world-unit ones — the two assumptions the carver makes
+    // (see BlockDamage.Build).
+    [SerializeField] float outlineCornerRadius;
+    [SerializeField] bool carvesDamage = true;
 
     [SerializeField] SpriteRenderer crackRenderer;
     // The crack net, stage-major: `stage * variants + variant`, so one flat
@@ -125,6 +136,23 @@ public class Brick : MonoBehaviour
     // on every block of every material is a hierarchy nobody can read.
     Transform chipRoot;
     int chipsShown;
+
+    // The block's own crack net, the pieces gone from its outline, and the
+    // mesh those two are cut into. The mesh belongs to this instance and is
+    // destroyed with it: it is built here rather than loaded, so nothing else
+    // will ever free it (see ReleaseDamage).
+    // How the block is divided into the pieces it can lose, and which of them
+    // have already gone. Both are made on the first hit.
+    BlockDamage.Shards shards;
+    bool[] shardGone;
+    readonly List<BlockDamage.Bite> bites = new List<BlockDamage.Bite>();
+    Mesh damagedMesh;
+    // The space the prefab's own mesh is authored in — a unit cube for the box
+    // blocks, final size for the rounded prism. Read off the shared mesh once,
+    // before the first carve replaces it, because after that the only mesh on
+    // the renderer is one this component made.
+    Vector3 bodyLocalSize = Vector3.one;
+    bool bodyMeasured;
     // Set the moment a block starts coming apart, and checked on the way in, so
     // that two antimatter blocks side by side detonate each other once rather
     // than forever: Destroy is deferred to the end of the frame, so a block
@@ -257,6 +285,24 @@ public class Brick : MonoBehaviour
         // Chip).
         if (at.HasValue) Chip(at.Value);
 
+        // The damage the block wears in its own geometry: the piece the ball
+        // just knocked out of it, gone from the block and falling (see
+        // BlockDamage and "A block comes apart in pieces"). This is the shape
+        // of the block changing, not a picture drawn on it — which is why it
+        // is done here, off the same hit, rather than by the overlay below.
+        Carve(at);
+
+        // The drawn net is for the shapes that cannot be carved — the round
+        // block alone (see carvesDamage). Everywhere else the crack is cut into
+        // the face for real, and drawing a *second* net over it was measured on
+        // the bench and is plainly wrong: the two nets are generated from
+        // different seeds and cannot align, so a block wore two different
+        // craquelures at once, one of them floating a hair in front of the
+        // other. What the sprite was for — saying where a block is in its
+        // ladder of wear — the geometry now says better, because it says it in
+        // relief that turns with the light.
+        if (carvesDamage) return false;
+
         if (crackRenderer == null || crackSprites == null || crackSprites.Length < CrackStages) return false;
         int variants = crackSprites.Length / CrackStages;
 
@@ -314,7 +360,6 @@ public class Brick : MonoBehaviour
     void Chip(Vector2 at)
     {
         if (!BlockMaterials.Chips(Material)) return;
-        if (chipSprites == null || chipSprites.Length == 0) return;
         if (crackRenderer == null || chipsShown >= MaxChips) return;
 
         var face = crackRenderer.transform;
@@ -343,22 +388,33 @@ public class Brick : MonoBehaviour
         offset.x = Mathf.Clamp(offset.x, -half.x + inset, half.x - inset);
         offset.y = Mathf.Clamp(offset.y, -half.y + inset, half.y - inset);
 
-        var chip = new GameObject("Chip" + chipsShown);
-        chip.transform.SetParent(chipRoot, false);
-        chip.transform.position = new Vector3(
+        var where = new Vector3(
             face.position.x + offset.x, face.position.y + offset.y, face.position.z);
-        // Turned about the view axis only — the chip lies in the face's plane
-        // and every one of them may lie in it differently.
-        chip.transform.localRotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
-        chip.transform.localScale = Vector3.one * size;
 
-        var renderer = chip.AddComponent<SpriteRenderer>();
-        renderer.sprite = chipSprites[Random.Range(0, chipSprites.Length)];
-        // Over the crack net rather than under it: the glaze is gone where a
-        // chip is, so a craze line running across the hollow is a line that
-        // is no longer there.
-        renderer.sortingOrder = crackRenderer.sortingOrder + 1;
-        renderer.color = ChipTint();
+        // The decal is the *drawing* of a hollow, and a block that carves has a
+        // real one — the bite `Carve` takes out of its outline at this same
+        // point. So it is drawn only where nothing can be cut: on the round
+        // block, and on any shape whose carving is switched off. Drawn over a
+        // real notch it reads as a sticker laid beside the hole it is a picture
+        // of, which is what the bench showed.
+        if (!carvesDamage && chipSprites != null && chipSprites.Length > 0)
+        {
+            var chip = new GameObject("Chip" + chipsShown);
+            chip.transform.SetParent(chipRoot, false);
+            chip.transform.position = where;
+            // Turned about the view axis only — the chip lies in the face's
+            // plane and every one of them may lie in it differently.
+            chip.transform.localRotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
+            chip.transform.localScale = Vector3.one * size;
+
+            var renderer = chip.AddComponent<SpriteRenderer>();
+            renderer.sprite = chipSprites[Random.Range(0, chipSprites.Length)];
+            // Over the crack net rather than under it: the glaze is gone where
+            // a chip is, so a craze line running across the hollow is a line
+            // that is no longer there.
+            renderer.sortingOrder = crackRenderer.sortingOrder + 1;
+            renderer.color = ChipTint();
+        }
         chipsShown++;
 
         // And the flake itself, which is the other half of the same event: the
@@ -369,13 +425,149 @@ public class Brick : MonoBehaviour
         // same one its rubble is (see Break), so a chip off a dark casting and
         // a chip off a pale one drop different debris.
         var away = offset.sqrMagnitude > 0.000001f ? offset.normalized : Vector2.up;
-        Debris.Chip(chip.transform.position, away, size,
+        Debris.Chip(where, away, size,
             faceColor.linear, GetComponent<MeshRenderer>().sharedMaterial);
     }
 
     // A chip is drawn in no colour of its own: black, at ChipStrength of the
     // shading its texture carries.
     static Color ChipTint() => new Color(0f, 0f, 0f, ChipStrength);
+
+    // How big a bite the ball takes out of the outline, as a share of the chip
+    // it leaves — the decal marks the hollow, and this is the piece of the
+    // block that is actually gone from the edge. Under half, because a bite is
+    // measured as a radius against a chip measured as a width, and because a
+    // notch that swallowed the whole chip would eat a tenth of a block's height
+    // on the first hit it took.
+    const float BiteOfChip = 0.35f;
+
+    // The block's shape after this hit. Cheap to say and not cheap to do — a
+    // slab's damaged mesh is a few thousand vertices — so it happens once per
+    // hit and never per frame, and the mesh it replaces is destroyed rather
+    // than left to the garbage collector, which does not collect meshes.
+    void Carve(Vector2? at)
+    {
+        if (!carvesDamage) return;
+
+        var filter = GetComponent<MeshFilter>();
+        if (filter == null || filter.sharedMesh == null) return;
+
+        if (!bodyMeasured)
+        {
+            bodyLocalSize = filter.sharedMesh.bounds.size;
+            bodyMeasured = true;
+        }
+
+        var worldSize = Vector3.Scale(bodyLocalSize, transform.lossyScale);
+        var halfLocal = new Vector2(bodyLocalSize.x * 0.5f, bodyLocalSize.y * 0.5f);
+        var localHit = at.HasValue
+            ? (Vector2)transform.InverseTransformPoint(at.Value.x, at.Value.y, transform.position.z)
+            : Vector2.zero;
+
+        // A material that chips loses a piece of its edge where it was hit. One
+        // per hit, and the same hit the decal and the falling flake come off,
+        // so all three are one event seen three ways.
+        if (at.HasValue && BlockMaterials.Chips(Material))
+        {
+            float radius = ChipSize * BiteOfChip * (bodyLocalSize.x / Mathf.Max(worldSize.x, 0.0001f));
+            bites.Add(new BlockDamage.Bite { At = localHit, Radius = radius });
+        }
+
+        // How many pieces this block comes apart in: about one per hit it can
+        // take, so a slab sheds a piece at a time and the hit that kills it
+        // takes whatever is left standing. Clamped at both ends — two pieces is
+        // a block cut in half rather than broken, and past eight the pieces are
+        // smaller than the ball that is knocking them off.
+        // Seeded off where the block stands rather than off the object, so a
+        // bench rebuild at the same seed lays down the same wall breaking the
+        // same way — and so two blocks side by side never break alike.
+        shards ??= BlockDamage.Shards.Build(
+            Mathf.RoundToInt(transform.position.x * 613f + transform.position.y * 271f),
+            halfLocal, Mathf.Clamp(Hardness, 3, 8));
+        shardGone ??= new bool[shards.Sites.Length];
+
+        // The piece the ball just knocked off — the one nearest where it
+        // landed that is still there. It is thrown *before* the block is
+        // rebuilt without it, so the two are one frame's worth of the same
+        // event rather than a hole appearing and something falling later.
+        if (at.HasValue)
+        {
+            int loose = shards.NearestStanding(localHit, shardGone);
+            if (loose >= 0)
+            {
+                shardGone[loose] = true;
+                Shed(loose, worldSize, localHit, null);
+            }
+        }
+
+        var carved = BlockDamage.BuildBlock(
+            bodyLocalSize, worldSize, bites, outlineCornerRadius, shards, shardGone);
+
+        ReleaseDamage();
+        damagedMesh = carved;
+        filter.sharedMesh = damagedMesh;
+
+
+    }
+
+    // One piece off the block and into the world: built out of the same cells
+    // the block has just stopped drawing, stood where it stood, and handed to
+    // Debris to fall. Nothing about the block moves — the piece is a separate
+    // object from the moment it comes away, which is what lets it turn and fall
+    // while the wall it left stays exactly where it was.
+    void Shed(int piece, Vector3 worldSize, Vector2 from, Paddle catcher)
+    {
+        var mesh = BlockDamage.BuildPiece(
+            bodyLocalSize, worldSize, bites, outlineCornerRadius,
+            shards, piece, out var centre);
+        if (mesh == null) return;
+        if (mesh.vertexCount == 0)
+        {
+            Destroy(mesh);
+            return;
+        }
+
+        // Out of the block along the way the ball came in — measured from where
+        // the piece sat rather than from the contact, so a piece knocked off
+        // the far end still leaves in a direction that makes sense.
+        var away = (Vector2)(centre - (Vector3)from);
+        if (away.sqrMagnitude < 0.000001f) away = Vector2.up;
+
+        Debris.Piece(
+            mesh, transform.TransformPoint(centre), transform.rotation, transform.lossyScale,
+            away.normalized, faceColor.linear,
+            GetComponent<MeshRenderer>().sharedMaterial, catcher);
+    }
+
+    // Everything the block has left, thrown at once: what a block breaking
+    // *is*, now that it is made of pieces. These carry the catcher, because
+    // they are the block's rubble and rubble is worth catching (see
+    // Debris.Piece and "Rubble is worth catching").
+    void ScatterRemains()
+    {
+        if (shards == null || shardGone == null || !carvesDamage) return;
+
+        var worldSize = Vector3.Scale(bodyLocalSize, transform.lossyScale);
+        var catcher = GameManager.Instance != null ? GameManager.Instance.Catcher : null;
+        for (int i = 0; i < shards.Sites.Length; i++)
+        {
+            if (shardGone[i]) continue;
+            shardGone[i] = true;
+            Shed(i, worldSize, shards.Sites[i] * 2f, catcher);
+        }
+    }
+
+    // The instance's own mesh, freed. A Mesh is an unmanaged object: dropping
+    // the reference leaks it until the scene unloads, and a round of thirty-six
+    // blocks taking two hits each would leak seventy of them.
+    void ReleaseDamage()
+    {
+        if (damagedMesh == null) return;
+        Destroy(damagedMesh);
+        damagedMesh = null;
+    }
+
+    void OnDestroy() => ReleaseDamage();
 
     // How hard a block going off flares the perimeter. See `Break`.
     const float BreakFlash = 0.6f;
@@ -403,8 +595,14 @@ public class Brick : MonoBehaviour
         // `faceColor` is the same colour the cracks answer to, and for the same
         // reason — it is what the block is actually seen to be. It is held in
         // sRGB, so it makes the usual trip on the way to a shader.
-        Debris.Spawn(transform.position, renderer.bounds.size, faceColor.linear, body,
-            1f, GameManager.Instance != null ? GameManager.Instance.Catcher : null);
+        // A carved block comes apart into the pieces it was already divided
+        // into; only a block that cannot be carved falls back on the cube
+        // rubble, which is every block's rubble until the first time it is hit
+        // and the shape it breaks into is decided.
+        if (carvesDamage && shards != null) ScatterRemains();
+        else
+            Debris.Spawn(transform.position, renderer.bounds.size, faceColor.linear, body,
+                1f, GameManager.Instance != null ? GameManager.Instance.Catcher : null);
         // The room takes note of it. Gentler than a border hit, and for a
         // reason rather than for taste: a brick goes off out in the middle of
         // the field, so its flare reaches the lamps at a share of its strength

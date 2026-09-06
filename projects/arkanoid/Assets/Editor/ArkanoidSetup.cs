@@ -2756,6 +2756,62 @@ public static class ArkanoidSetup
             Debug.Log($"[ArkanoidSetup] Stage 107: wired the chip decals into {chipless.Count} block prefab(s).");
             return;
         }
+
+        // Stage 108: tell each block prefab what its own outline is, which is
+        // the one thing the damage carver cannot read off a mesh (see
+        // BlockDamage.Build). Two facts per prefab: the outline's corner radius
+        // in world units, and whether the shape can be carved at all — the
+        // round block cannot, since its face is a sphere rather than a slab and
+        // its UVs are the stock sphere's rather than this project's world-unit
+        // ones, and both are assumptions the carver makes rather than checks.
+        var uncarved = FirstBlockPrefabMissingOutline();
+        if (uncarved != null)
+        {
+            SetBlockOutline(uncarved);
+            Debug.Log($"[ArkanoidSetup] Stage 108: set the block outline on {uncarved}.");
+            return;
+        }
+    }
+
+    // The outline each block prefab wears, and the whole of what stage 108
+    // writes: corner radius in world units, and whether the shape is carved.
+    static readonly (string Prefab, float Radius, bool Carves)[] BlockOutlines =
+    {
+        (BrickPrefabPath, 0f, true),
+        (HalfBrickPrefabPath, 0f, true),
+        (RoundedBrickPrefabPath, RoundedBrickCornerRadius, true),
+        (RoundBrickPrefabPath, 0f, false),
+    };
+
+    static string FirstBlockPrefabMissingOutline()
+    {
+        foreach (var (path, radius, carves) in BlockOutlines)
+        {
+            var root = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            var brick = root != null ? root.GetComponent<Brick>() : null;
+            if (brick == null) continue;
+            var so = new SerializedObject(brick);
+            if (Mathf.Abs(so.FindProperty("outlineCornerRadius").floatValue - radius) > 0.0005f
+                || so.FindProperty("carvesDamage").boolValue != carves) return path;
+        }
+        return null;
+    }
+
+    static void SetBlockOutline(string prefabPath)
+    {
+        foreach (var (path, radius, carves) in BlockOutlines)
+        {
+            if (path != prefabPath) continue;
+            var root = PrefabUtility.LoadPrefabContents(path);
+            var so = new SerializedObject(root.GetComponent<Brick>());
+            so.FindProperty("outlineCornerRadius").floatValue = radius;
+            so.FindProperty("carvesDamage").boolValue = carves;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            PrefabUtility.UnloadPrefabContents(root);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            return;
+        }
     }
 
     // A cubemap of one colour on all six faces. Small on purpose: the shader
