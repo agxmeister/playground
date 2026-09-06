@@ -168,6 +168,15 @@ public class Brick : MonoBehaviour
     // the last word here too.
     Color faceColor = Color.white;
 
+    // Whether this block sheds pieces, which takes *both* halves agreeing: the
+    // material has to be one that comes apart rather than crazes (Ceramics, see
+    // BlockMaterials.ComesApart) and the shape has to be one the pieces can be
+    // cut out of (`carvesDamage` — every block but the round one, whose face is
+    // a sphere). A block that fails either test wears the crack net drawn on
+    // its face and shatters into cube rubble, which is what every block did
+    // before pieces existed.
+    bool ComesApart => carvesDamage && BlockMaterials.ComesApart(Material);
+
     // Shape times material. Nothing stores this: both halves can be set in
     // either order at spawn and the answer is always current.
     public int Hardness => baseHardness * traits.Multiplier;
@@ -292,16 +301,13 @@ public class Brick : MonoBehaviour
         // is done here, off the same hit, rather than by the overlay below.
         Carve(at);
 
-        // The drawn net is for the shapes that cannot be carved — the round
-        // block alone (see carvesDamage). Everywhere else the crack is cut into
-        // the face for real, and drawing a *second* net over it was measured on
-        // the bench and is plainly wrong: the two nets are generated from
-        // different seeds and cannot align, so a block wore two different
-        // craquelures at once, one of them floating a hair in front of the
-        // other. What the sprite was for — saying where a block is in its
-        // ladder of wear — the geometry now says better, because it says it in
-        // relief that turns with the light.
-        if (carvesDamage) return false;
+        // The drawn net is what a block wears when it does *not* come apart: a
+        // plastic block crazes and keeps its shape, so the crack is a picture
+        // on its face and the ladder of wear is the picture spreading, exactly
+        // as it was before pieces existed. A block that sheds pieces has no use
+        // for it — the pieces are the damage, and a net drawn over a hole is a
+        // second, differently-seeded craquelure floating in front of the first.
+        if (ComesApart) return false;
 
         if (crackRenderer == null || crackSprites == null || crackSprites.Length < CrackStages) return false;
         int variants = crackSprites.Length / CrackStages;
@@ -397,7 +403,7 @@ public class Brick : MonoBehaviour
         // block, and on any shape whose carving is switched off. Drawn over a
         // real notch it reads as a sticker laid beside the hole it is a picture
         // of, which is what the bench showed.
-        if (!carvesDamage && chipSprites != null && chipSprites.Length > 0)
+        if (!ComesApart && chipSprites != null && chipSprites.Length > 0)
         {
             var chip = new GameObject("Chip" + chipsShown);
             chip.transform.SetParent(chipRoot, false);
@@ -447,7 +453,7 @@ public class Brick : MonoBehaviour
     // than left to the garbage collector, which does not collect meshes.
     void Carve(Vector2? at)
     {
-        if (!carvesDamage) return;
+        if (!ComesApart) return;
 
         var filter = GetComponent<MeshFilter>();
         if (filter == null || filter.sharedMesh == null) return;
@@ -552,7 +558,7 @@ public class Brick : MonoBehaviour
     // the way, they are worth catching (see "Rubble is worth catching").
     void ScatterRemains()
     {
-        if (shards == null || shardGone == null || !carvesDamage) return;
+        if (shards == null || shardGone == null || !ComesApart) return;
 
         var worldSize = Vector3.Scale(bodyLocalSize, transform.lossyScale);
         var catcher = GameManager.Instance != null ? GameManager.Instance.Catcher : null;
@@ -602,11 +608,10 @@ public class Brick : MonoBehaviour
         // `faceColor` is the same colour the cracks answer to, and for the same
         // reason — it is what the block is actually seen to be. It is held in
         // sRGB, so it makes the usual trip on the way to a shader.
-        // A carved block comes apart into the pieces it was already divided
-        // into; only a block that cannot be carved falls back on the cube
-        // rubble, which is every block's rubble until the first time it is hit
-        // and the shape it breaks into is decided.
-        if (carvesDamage && shards != null) ScatterRemains();
+        // A block that comes apart breaks into the pieces it was already
+        // divided into; everything else shatters into the cube rubble, which is
+        // still what a plastic block throws.
+        if (ComesApart && shards != null) ScatterRemains();
         else
             Debris.Spawn(transform.position, renderer.bounds.size, faceColor.linear, body,
                 1f, GameManager.Instance != null ? GameManager.Instance.Catcher : null);

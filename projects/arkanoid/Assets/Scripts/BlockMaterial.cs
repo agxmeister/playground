@@ -84,6 +84,19 @@ public static class BlockMaterials
     // Brick.Chip and "A ceramic chips where it was hit" in CLAUDE.md).
     public static bool Chips(BlockMaterial material) => material == BlockMaterial.Ceramics;
 
+    // Whether the block *comes apart* under the ball: a hit it survives knocks
+    // a whole piece out of it and that piece falls (see "A block comes apart in
+    // pieces"). A fired ceramic does — it is brittle all the way through, so
+    // what a ball takes out of it is a piece rather than a dent — where a
+    // moulded plastic crazes and keeps its shape, and wears its damage as the
+    // crack net drawn on its face, exactly as it always has.
+    //
+    // Separate from Chips even though both name Ceramics today, because they
+    // are different facts about a substance and the next material will want one
+    // without the other: Crystal should shatter into pieces without ever
+    // shedding the fine glaze grit a chip throws.
+    public static bool ComesApart(BlockMaterial material) => material == BlockMaterial.Ceramics;
+
     // How many materials there are, for the array of assets GameManager holds
     // and the setup stage that fills it.
     public const int Count = (int)BlockMaterial.Neutronium + 1;
