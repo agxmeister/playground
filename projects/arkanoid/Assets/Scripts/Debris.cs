@@ -155,10 +155,11 @@ public class Debris : MonoBehaviour
     // where it stood and turned about itself, so what leaves the wall is
     // exactly the shape the wall is now missing.
     //
-    // `catcher` is handed over for the pieces a *broken* block throws, which
-    // are its rubble and worth points like any other; the pieces shed by a hit
-    // the block survived carry none, for the reason Chip gives — a block that
-    // paid a player for every hit it took would pay for not breaking it.
+    // `catcher` is handed over for every piece of a block, whether the block
+    // survived losing it or came apart entirely: a piece is a piece, and the
+    // eye cannot tell in the air which kind it is watching, so neither should
+    // the paddle. The grit a chip throws is the exception (see Chip) — that is
+    // dust off a surface rather than a part of the block.
     public static void Piece(
         Mesh mesh, Vector3 position, Quaternion rotation, Vector3 scale, Vector2 away,
         Color color, Material material, Paddle catcher = null)
@@ -298,9 +299,15 @@ public class Debris : MonoBehaviour
         if (paddle == null) return false;
 
         // The paddle's face grown by the fragment's own half-size, so contact is
-        // judged between two bodies rather than between a point and a body.
+        // judged between two bodies rather than between a point and a body. The
+        // half-size is *measured* rather than read off the transform, and that
+        // is not a refinement: a cube fragment's scale is its own side, but a
+        // block piece's scale is the whole block's — 1.5 on a slab — so taking
+        // it from the transform would have grown the paddle by three quarters
+        // of a unit either side and caught pieces out of the air beside it.
         var bounds = paddle.bounds;
-        float reach = transform.localScale.x * 0.5f;
+        var mine = GetComponent<Renderer>();
+        float reach = mine != null ? mine.bounds.extents.x : transform.localScale.x * 0.5f;
         float left = bounds.min.x - reach, right = bounds.max.x + reach;
         float bottom = bounds.min.y - reach, top = bounds.max.y + reach;
 

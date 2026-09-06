@@ -490,13 +490,21 @@ public class Brick : MonoBehaviour
         // landed that is still there. It is thrown *before* the block is
         // rebuilt without it, so the two are one frame's worth of the same
         // event rather than a hole appearing and something falling later.
+        //
+        // It is worth catching, exactly like the pieces a block throws when it
+        // finally goes: a piece of a block is a piece of a block whether the
+        // block survived losing it or not, and the paddle has no way of telling
+        // the two apart in the air. That does mean a hit which breaks nothing
+        // can still pay — see GameManager.DebrisPoints for what a catch is
+        // worth, and note that the paddle has to leave the ball to collect it.
         if (at.HasValue)
         {
             int loose = shards.NearestStanding(localHit, shardGone);
             if (loose >= 0)
             {
                 shardGone[loose] = true;
-                Shed(loose, worldSize, localHit, null);
+                Shed(loose, worldSize, localHit,
+                    GameManager.Instance != null ? GameManager.Instance.Catcher : null);
             }
         }
 
@@ -540,9 +548,8 @@ public class Brick : MonoBehaviour
     }
 
     // Everything the block has left, thrown at once: what a block breaking
-    // *is*, now that it is made of pieces. These carry the catcher, because
-    // they are the block's rubble and rubble is worth catching (see
-    // Debris.Piece and "Rubble is worth catching").
+    // *is*, now that it is made of pieces. Like the pieces knocked off along
+    // the way, they are worth catching (see "Rubble is worth catching").
     void ScatterRemains()
     {
         if (shards == null || shardGone == null || !carvesDamage) return;
