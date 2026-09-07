@@ -139,12 +139,23 @@ public class GameManager : MonoBehaviour
         ShowMenu();
     }
 
-    // The paddle a shattering brick's rubble may be caught on, and null unless a
-    // round is actually being played: the menu's slabs shatter through the same
-    // code and there is no score on the menu screen to add to. Read once, when
+    // The paddle a shattering brick's rubble may be caught on, and null unless
+    // there is one standing: the menu's slabs shatter through the same code and
+    // have nothing under them to land on. Read once, when
     // the rubble is spawned — OnDebrisCaught asks the question again when a
     // chunk actually lands, since a round can end while rubble is still falling.
-    public Paddle Catcher => state == State.Ready || state == State.Playing ? paddle : null;
+    // The bench is the third answer: it stands a copy of this paddle (see
+    // TestBench) and shatters blocks through the same code, so its rubble is
+    // handed that copy and can be caught there too. Without this the bench was
+    // the one place a block came apart into scenery — the pieces fell through
+    // the paddle standing under them, which is the opposite of what a room for
+    // looking at blocks is for.
+    public Paddle Catcher => state switch
+    {
+        State.Ready or State.Playing => paddle,
+        State.Bench => testBench != null ? testBench.Catcher : null,
+        _ => null,
+    };
 
     // A chunk of a broken brick landed on the paddle. Nothing is added once the
     // round is over: rubble goes on falling over the end screen and over name

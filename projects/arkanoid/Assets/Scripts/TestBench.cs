@@ -639,6 +639,15 @@ public class TestBench : MonoBehaviour
         ServeBall();
     }
 
+    // The paddle rubble can be landed on here, and null while none is standing.
+    // Read through `GameManager.Catcher` exactly as a round's paddle is, so a
+    // brick shattering on the bench hands its pieces the same catcher a brick
+    // in a round does — that is the whole of what makes "rubble worth catching"
+    // one of the things this room can actually be used to look at. It pays
+    // nothing: `GameManager.OnDebrisCaught` still refuses a bench, the same way
+    // breaking a block here scores nothing.
+    public Paddle Catcher => paddle;
+
     // The paddle is copied out of the playfield rather than built, and it is
     // Instantiate's *positioning* overload that makes that safe: `Paddle.Awake`
     // reads `homeX` off its own transform and clamps its travel to either side
