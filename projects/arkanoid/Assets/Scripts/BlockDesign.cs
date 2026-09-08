@@ -15,7 +15,7 @@ using UnityEngine;
 //
 // **The die is not gone, it is narrowed.** `BlockVariety.Roll` still exists and
 // still means what it did; a material with no designs — which is every material
-// but Polymer and Ceramics — goes on rolling. What a design must never become is a second
+// but Polymer, Ceramics and Crystal — goes on rolling. What a design must never become is a second
 // hardness — nothing here touches `BlockMaterials`, and two blocks of one
 // material differing in look differ in nothing else.
 public enum BlockDesign
@@ -48,6 +48,24 @@ public enum BlockDesign
     // the veining as scratches; a cloud is what still reads, because it is the
     // one character that is in the body rather than on the face.
     Slate,
+    // Crystal's three, and the one band whose points name *stones* rather than
+    // shades: the band runs frost to amethyst, so where a block lands on it
+    // decides which mineral it is as much as how bright it came out. Light to
+    // dark like the other two.
+    //
+    // The icy near-white, cleanly cleaved: coarse flat facets and nothing else
+    // on the face, which is the pale low-poly tile off the reference sheet.
+    Quartz,
+    // The middle of the band, shattered. Pale violet-grey — the colour fluorite
+    // actually comes out — and the one of the three whose character is the
+    // *break* rather than the cut: slivers crossing every way.
+    Fluorite,
+    // The dark violet end, and a druse rather than a face. Down here a single
+    // cleaved plane would be a slab of dark glass with one highlight on it,
+    // where a bed of points keeps catching the light all over — which is the
+    // same argument Slate makes one material up, that the character has to be
+    // the one that survives having little brightness left to draw with.
+    Amethyst,
 }
 
 public static class BlockDesigns
@@ -84,6 +102,11 @@ public static class BlockDesigns
     const int Vein = 1;
     const int Cloudy = 2;
 
+    // Crystal's, in `ArkanoidSetup.CrystalGrains`' order.
+    const int Facet = 0;
+    const int Shard = 1;
+    const int Druse = 2;
+
     // Every design, in the enum's own order so `(int)design` indexes this
     // directly.
     //
@@ -100,6 +123,9 @@ public static class BlockDesigns
         new Definition(BlockMaterial.Ceramics, Vein, 0.90f),     // Porcelain
         new Definition(BlockMaterial.Ceramics, Crackle, 0.35f),  // Craze
         new Definition(BlockMaterial.Ceramics, Cloudy, 0.10f),   // Slate
+        new Definition(BlockMaterial.Crystal, Facet, 0.92f),     // Quartz
+        new Definition(BlockMaterial.Crystal, Shard, 0.55f),     // Fluorite
+        new Definition(BlockMaterial.Crystal, Druse, 0.12f),     // Amethyst
     };
 
     public static int Count => All.Length;
@@ -112,10 +138,11 @@ public static class BlockDesigns
 
     public static string NameOf(BlockDesign design) => design.ToString();
 
-    // Whether a material has any designs at all. Polymer and Ceramics have three
-    // each and every other material has none, which is not a gap to be filled
-    // but the same ordinary case `VarietyOf` already answers null for: no design
-    // means the block rolls, exactly as it did before any of this existed.
+    // Whether a material has any designs at all. Polymer, Ceramics and Crystal
+    // have three each and every other material has none, which is not a gap to
+    // be filled but the same ordinary case `VarietyOf` already answers null for:
+    // no design means the block rolls, exactly as it did before any of this
+    // existed.
     public static bool HasAny(BlockMaterial material)
     {
         foreach (var definition in All)

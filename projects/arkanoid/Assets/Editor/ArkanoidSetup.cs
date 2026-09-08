@@ -65,6 +65,28 @@ public static class ArkanoidSetup
         ("CeramicsVein", GrainKind.Vein),
         ("CeramicsCloud", GrainKind.Cloud),
     };
+
+    // Crystal's surface grains, and a third way of building one. Polymer's are
+    // scattered — a flat with caps standing off it — and Ceramics' are carved —
+    // a smooth glaze with something taken out of it. Neither is what the crystal
+    // reference is: every image on that sheet is a *partition* of the face into
+    // flat facets meeting at sharp creases, which is what a mineral does when it
+    // cleaves. So these are cut (CutFacets): the field is divided into cells and
+    // each cell is filled with its own tilted plane, which puts the character in
+    // the discontinuities between facets rather than in a bump or a groove.
+    //
+    // The three are the three the sheet actually shows. The pale low-poly tiles
+    // are one partition, coarse and calm (Facet). The shattered foil is two
+    // partitions crossing, each elongated the other's way (Shard) — the reason
+    // for two is below. And the crystal masses, blue and violet, are a druse: a
+    // bed of small points standing off a faceted body (Druse), which is the one
+    // of the three with anything raised on it at all.
+    static readonly (string Name, GrainKind Kind)[] CrystalGrains =
+    {
+        ("CrystalFacet", GrainKind.Facet),
+        ("CrystalShard", GrainKind.Shard),
+        ("CrystalDruse", GrainKind.Druse),
+    };
     static string GrainTexturePath(string name) => TexturesFolder + "/" + name + ".png";
     static string GrainNormalPath(string name) => TexturesFolder + "/" + name + "Normal.png";
     // 1024 px laid at half a tile per unit (BlockGrainTiles) is the same
@@ -83,6 +105,20 @@ public static class ArkanoidSetup
     // three (see WriteGrainAlbedo), and named rather than repeated so that
     // retuning the plastic's is one edit.
     const float PolymerContrast = 0.30f;
+    // What Crystal's three spend on pigment, one number for the three of them
+    // like the plastic's. It is there for the reason the other two materials'
+    // is — the end faces the key light never reaches have no relief to show, and
+    // a facet is a flat plane, so with its relief alone a crystal's end face
+    // would come back as a blank panel with not even a bump to catch a sheen.
+    //
+    // But it is the *lowest* of the three rather than the highest, which is
+    // where it started. At 0.40 the pigment was drawing a dark line along every
+    // crease as well as a flat value across every facet, and the two together
+    // are what read as grout between stones (see FacetNormalStrength). A cleaved
+    // face is one substance: the partition should be visible because the faces
+    // catch the light differently, not because they are painted different
+    // colours.
+    const float CrystalContrast = 0.26f;
     // Texels to a world unit on a block's face: the tile's own pixels over the
     // world span BlockGrainTiles lays them across. Every *carved* feature is
     // sized against this rather than in texels, and the distinction is worth
@@ -137,6 +173,45 @@ public static class ArkanoidSetup
     // twice — and the band is bright enough throughout that even this shows.
     const float CeramicsHueJitter = 0.015f;
 
+    // Crystal's band, and the first one that is a *hue* from end to end rather
+    // than a value with a warmth in it. The reference sheet is one substance
+    // seen in three stones — icy near-white quartz, pale blue, deep violet
+    // amethyst — so the band runs from frost to amethyst and the point rolled
+    // along it picks the stone as much as the brightness.
+    //
+    // That is also what keeps the dark end legible. The doc's standing worry
+    // about a dark band is that a x1 which can come out as dark as Neutronium
+    // throws away what a band is for; here the bottom end is not grey but
+    // plainly violet, which no metal on the ladder is, so it is told apart by
+    // chroma where Polymer's dark end is told apart by its grain.
+    //
+    // **The alpha is load-bearing and is why both ends carry one.** Crystal is
+    // the first surfaced material that is transparent (BlockMaterialLooks gives
+    // its shared asset an alpha of 0.62), and a variety's tint goes on as
+    // `_BaseColor` through a property block — so a band written at alpha 1 would
+    // hand every crystal block a fully opaque tint and turn a pane into a slab
+    // on the first roll. The two ends differ a little for a reason of their own:
+    // a pale quartz is the milky one and a deep amethyst is the glassy one.
+    static readonly Color CrystalDarkest = new Color(0.200f, 0.130f, 0.340f, 0.62f);
+    static readonly Color CrystalLightest = new Color(0.900f, 0.940f, 0.975f, 0.74f);
+    // Both ends glossy, and closer together than even the ceramic's: a crystal
+    // is a cleaved face whatever colour the stone is. The pale end leads *down*
+    // rather than up — the milky quartz is the frosted one — which is the
+    // opposite of the plastic's and the ceramic's, where the dark stock is the
+    // polished stock.
+    //
+    // Both came down from 0.95/0.80 on the bench. A facet is a small flat mirror
+    // and there are dozens per block, so at 0.95 the few whose tilt happened to
+    // aim the key light at the camera clipped to white and bloomed, which put a
+    // scatter of blown specks across a face and read as glitter stuck on rather
+    // than as a stone that is glossy. What is left still plainly glints.
+    const float CrystalDarkSmoothness = 0.84f;
+    const float CrystalLightSmoothness = 0.62f;
+    // The widest of the three. Two stones of one mineral differ in tint more
+    // than two firings of a clay do — the same quartz comes out white, grey or
+    // faintly pink — and a band this bright has the range to show it.
+    const float CrystalHueJitter = 0.045f;
+
     // Every material with a surface of its own: the grains it may be moulded
     // with and the band its batch colour is drawn from. A material with no
     // entry wears its shared asset untouched, which is still every material but
@@ -161,6 +236,8 @@ public static class ArkanoidSetup
             PolymerDarkSmoothness, PolymerLightSmoothness, PolymerHueJitter),
         (BlockMaterial.Ceramics, CeramicsGrains, CeramicsDarkest, CeramicsLightest,
             CeramicsDarkSmoothness, CeramicsLightSmoothness, CeramicsHueJitter),
+        (BlockMaterial.Crystal, CrystalGrains, CrystalDarkest, CrystalLightest,
+            CrystalDarkSmoothness, CrystalLightSmoothness, CrystalHueJitter),
     };
 
     // How many UV units each block shape lays across one world unit of its
@@ -184,12 +261,15 @@ public static class ArkanoidSetup
             1f / (Mathf.PI * RoundBrickDiameter), 2f / (Mathf.PI * RoundBrickDiameter))),
     };
 
-    // Which relief a grain is, across both reference sheets. Polymer's three
-    // are the characters that dominate a sheet of moulded plastic: the
+    // Which relief a grain is, across all three reference sheets. Polymer's
+    // three are the characters that dominate a sheet of moulded plastic: the
     // orange-peel most of it wears, the tight speckle of the pale tiles, the
     // coarse granulate of the dark ones. Ceramics' three are carved rather than
     // scattered (see CeramicsGrains) and are the characters of a fired tile: a
     // crackle glaze's craquelure net, a marble's veining, an alabaster's cloud.
+    // Crystal's three are cut (see CrystalGrains) — a partition of the face into
+    // flat facets, rather than anything laid on it or taken out of it: a cleaved
+    // face, a shattered one, and a bed of points.
     enum GrainKind
     {
         Pebble,
@@ -198,6 +278,9 @@ public static class ArkanoidSetup
         Crackle,
         Vein,
         Cloud,
+        Facet,
+        Shard,
+        Druse,
     }
     const string BallPanelTexturePath = TexturesFolder + "/BallPanels.png";
     const string MenuFogMaterialPath = MaterialsFolder + "/MenuFog.mat";
@@ -4356,12 +4439,18 @@ public static class ArkanoidSetup
     // a normal map. Both come off the same height field, so the faint mottling
     // and the relief agree about where the bumps are.
     //
-    // The height field is scattered discs with a smooth falloff, combined by
-    // *max* rather than by sum — a sum of overlapping discs is a lumpy plateau
-    // that normalises down to mush, where a max is a field of distinct rounded
-    // caps, which is what moulded plastic is. Every disc is drawn wrapped, so
-    // the tile is seamless in both directions and a random offset into it is as
-    // good as any other (see BlockVariety.Roll).
+    // There are three ways of building the field, one per material, and which
+    // one a grain uses is the whole of what its material's surface *is*.
+    // Polymer's grains are **scattered**: discs with a smooth falloff combined
+    // by *max* rather than by sum — a sum of overlapping discs is a lumpy
+    // plateau that normalises down to mush, where a max is a field of distinct
+    // rounded caps, which is what moulded plastic is. Ceramics' are **carved**:
+    // the field is flooded to the surface and then cut into. Crystal's are
+    // **cut**: the field is partitioned into cells and each cell filled with its
+    // own plane, so the character lives in the creases where two facets meet.
+    // Everything is drawn wrapped whichever way it is built, so the tile is
+    // seamless in both directions and a random offset into it is as good as any
+    // other (see BlockVariety.Roll).
     static void WriteGrainTextures(string name, GrainKind kind)
     {
         int size = GrainTextureSize;
@@ -4450,6 +4539,50 @@ public static class ArkanoidSetup
                 // the glaze and not in the surface.
                 normalStrength = 3f;
                 contrast = 0.55f;
+                break;
+
+            // A cleaved crystal, and the calmest of the three: one partition of
+            // the face into flat facets, coarse enough that a slab carries a
+            // dozen of them and the eye reads each one as a face rather than as
+            // a speckle. This is the pale low-poly tile off the reference sheet,
+            // and it is what says "faceted" with nothing else on it.
+            case GrainKind.Facet:
+                Flood(height, 1f);
+                CutFacets(height, size, random, 0.13f, 1f, 0.24f, 0.30f);
+                normalStrength = FacetNormalStrength(0.13f);
+                contrast = CrystalContrast;
+                break;
+
+            // Shattered: two partitions crossing, each elongated across the
+            // other's grain. One elongated partition on its own is the whole
+            // reason for two — cells stretched along the tile's x are cells
+            // stretched along the block's length, and a face of splinters all
+            // running the same way is the combing the world-UV meshes were
+            // written to get rid of. Crossed, the two leave slivers pointing
+            // every way, which is what a shattered foil actually looks like, and
+            // min-combining them is the same idiom the ceramics carve with: the
+            // second pass takes the first one's facets apart.
+            case GrainKind.Shard:
+                Flood(height, 1f);
+                CutFacets(height, size, random, 0.085f, 3.5f, 0.26f, 0.30f);
+                CutFacets(height, size, random, 0.085f * 3.5f, 1f / 3.5f, 0.26f, 0.30f);
+                normalStrength = FacetNormalStrength(0.085f);
+                contrast = CrystalContrast;
+                break;
+
+            // A druse: a bed of small crystal points, which is the blue and
+            // violet masses on the sheet and the one of the three with anything
+            // standing off the face at all. Same partition as the other two,
+            // read as points rather than as planes (CutFacets' `pitch`), with a
+            // little plane tilt left in so that no two points are the same
+            // symmetrical cone. Finer cells than Facet's by design — a druse is
+            // a *mass*, and the eye should count a dozen and a half points
+            // across a slab rather than a dozen faces.
+            case GrainKind.Druse:
+                Flood(height, 1f);
+                CutFacets(height, size, random, 0.09f, 1f, 0.22f, 0.10f, 0.35f);
+                normalStrength = FacetNormalStrength(0.09f);
+                contrast = CrystalContrast;
                 break;
 
             // An alabaster tile: the cloud in the body seen through a clear
@@ -4718,6 +4851,124 @@ public static class ArkanoidSetup
             }
         }
     }
+
+    // A crystal's facets: the face divided into cells, each filled with its own
+    // tilted plane. The third way of building a grain in this file, and the one
+    // the crystal sheet asks for — a cleaved mineral is neither a flat with
+    // caps on it nor a smooth glaze with grooves in it, it is a *partition*, and
+    // its whole character lives in the creases where two facets meet at an
+    // angle. Nothing here is rounded anywhere, on purpose.
+    //
+    // The cells are a jittered grid's Voronoi, for the reason CarveCrackle gives
+    // — free seeds clump, and a clump of tiny facets among big ones reads as a
+    // flaw rather than as a cleavage — but only the *nearest* seed is wanted
+    // here, not the gap between the two nearest, so this claims cells where the
+    // crackle drew their boundaries. One consequence worth stating: the
+    // neighbourhood searched is one ring rather than two, which is enough
+    // precisely because the jitter is bounded inside its own cell.
+    //
+    // `cellSize` is a facet's width in world units, like every other carved
+    // feature (GrainTexelsPerUnit), and `aspect` how many times wider than tall
+    // — it stretches the grid and the metric together, so cells come out
+    // elongated rather than merely sparse. `relief` is how far facets sit apart
+    // in height from one another and `tilt` how far the plane falls across one
+    // facet: the first is what makes the partition read as broken, the second
+    // what makes each piece read as a face catching its own share of the light.
+    //
+    // Min-combined into the field, which is what lets a second pass shatter the
+    // first rather than replace it (see GrainKind.Shard).
+    static void CutFacets(float[] height, int size, System.Random random, float cellSize,
+        float aspect, float relief, float tilt, float pitch = 0f)
+    {
+        float wide = cellSize * Mathf.Max(aspect, 0.0001f);
+        int divisionsX = Mathf.Max(2, Mathf.RoundToInt(size / (wide * GrainTexelsPerUnit)));
+        int divisionsY = Mathf.Max(2, Mathf.RoundToInt(size / (cellSize * GrainTexelsPerUnit)));
+        float cellX = (float)size / divisionsX, cellY = (float)size / divisionsY;
+
+        var seeds = new Vector2[divisionsX * divisionsY];
+        var bases = new float[seeds.Length];
+        var slopes = new Vector2[seeds.Length];
+        for (int gy = 0; gy < divisionsY; gy++)
+            for (int gx = 0; gx < divisionsX; gx++)
+            {
+                int index = gy * divisionsX + gx;
+                seeds[index] = new Vector2(
+                    (gx + 0.2f + 0.6f * (float)random.NextDouble()) * cellX,
+                    (gy + 0.2f + 0.6f * (float)random.NextDouble()) * cellY);
+                // The facet's own height, and the plane it was cut on. The top
+                // of the range is the surface itself, so the highest facets are
+                // the uncut face and the rest step down off it.
+                bases[index] = 1f - relief * (float)random.NextDouble();
+                float heading = (float)random.NextDouble() * Mathf.PI * 2f;
+                slopes[index] = new Vector2(Mathf.Cos(heading), Mathf.Sin(heading));
+            }
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float nearest = float.MaxValue;
+                int winner = 0;
+                float winnerX = 0f, winnerY = 0f;
+                int cx = (int)(x / cellX), cy = (int)(y / cellY);
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int gx = cx + dx, gy = cy + dy;
+                        var seed = seeds[
+                            ((gy % divisionsY + divisionsY) % divisionsY) * divisionsX
+                            + ((gx % divisionsX + divisionsX) % divisionsX)];
+                        // Carried across the seam with the index it was fetched
+                        // by, so the partition closes on itself and the tile has
+                        // no edge to seam at.
+                        float sx = seed.x + Mathf.Floor((float)gx / divisionsX) * size;
+                        float sy = seed.y + Mathf.Floor((float)gy / divisionsY) * size;
+                        // Measured in cells rather than in texels, which is what
+                        // makes an elongated grid come out as elongated cells:
+                        // in texels the same grid would give round cells with
+                        // gaps between them.
+                        float ux = (sx - x) / cellX, uy = (sy - y) / cellY;
+                        float distance = ux * ux + uy * uy;
+                        if (distance >= nearest) continue;
+                        nearest = distance;
+                        winner = ((gy % divisionsY + divisionsY) % divisionsY) * divisionsX
+                            + ((gx % divisionsX + divisionsX) % divisionsX);
+                        winnerX = sx;
+                        winnerY = sy;
+                    }
+                }
+
+                // The plane, taken across the facet in cell units so that a wide
+                // facet and a narrow one fall by the same amount over their own
+                // width rather than by the same amount per texel.
+                var slope = slopes[winner];
+                float along = slope.x * (x - winnerX) / cellX + slope.y * (y - winnerY) / cellY;
+                float value = bases[winner] - tilt * (0.5f + 0.5f * Mathf.Clamp(along, -1f, 1f))
+                    - pitch * Mathf.Sqrt(nearest);
+                int index = y * size + x;
+                if (value < height[index]) height[index] = value;
+            }
+        }
+    }
+
+    // The strength a facet field's normal map wants, from the width of a facet.
+    // WriteGrainNormal's rule of thumb is a strength about the feature's own
+    // radius, and for a plane the feature *is* the width it falls across. The
+    // creases between facets need nothing from this — they are discontinuities
+    // and come out crisp at any strength — so the number is entirely about how
+    // hard each face is shaded, which is the thing a cleaved crystal is read by.
+    //
+    // **The fraction is a fifth of a facet rather than a half, and that is the
+    // correction the first bench render earned** — the same correction the
+    // ceramics' grooves earned one material up, arriving by the other route. At
+    // half a facet the creases came out as bevelled dark outlines and every
+    // sliver as a separate raised stone with its own flat value: a photograph of
+    // a dry-stone wall, or of crazy paving, rather than of a broken crystal.
+    // What a facet has to do is catch a *different share of one light* from its
+    // neighbour, which is a small difference in tilt and not a step in height.
+    static float FacetNormalStrength(float cellSize) =>
+        0.22f * cellSize * GrainTexelsPerUnit;
 
     // Near white throughout: the block's actual colour is the per-instance tint
     // multiplying this, so what the albedo carries is only how far the grain

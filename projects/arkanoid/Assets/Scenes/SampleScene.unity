@@ -3009,6 +3009,20 @@ MonoBehaviour:
     darkSmoothness: 0.5
     lightSmoothness: 0.32
     hueJitter: 0.015
+  - material: 5
+    grains:
+    - {fileID: 2800000, guid: b7efd51e4522e4f869d2a49838fe3d82, type: 3}
+    - {fileID: 2800000, guid: 59ef0a158badf4111979d81474ce1fda, type: 3}
+    - {fileID: 2800000, guid: 4d2fa455d2c99496094741ebf07c2045, type: 3}
+    grainNormals:
+    - {fileID: 2800000, guid: 562958d04ac7f4db297ba6d8fe935312, type: 3}
+    - {fileID: 2800000, guid: 0ce3b8e9758604b13b4419c29d165d48, type: 3}
+    - {fileID: 2800000, guid: 6dbb3480a94da4fa3983093f30077049, type: 3}
+    darkest: {r: 0.2, g: 0.13, b: 0.34, a: 0.62}
+    lightest: {r: 0.9, g: 0.94, b: 0.975, a: 0.74}
+    darkSmoothness: 0.95
+    lightSmoothness: 0.8
+    hueJitter: 0.045
   paddle: {fileID: 887666782}
   scoreBoard: {fileID: 685092864}
   recordsPanel: {fileID: 1310166190}
