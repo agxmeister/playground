@@ -528,6 +528,12 @@ public static class ArkanoidSetup
     const string MenuOptionStartMaterialPath = MaterialsFolder + "/MenuOptionStart.mat";
     const string MenuOptionRecordsMaterialPath = MaterialsFolder + "/MenuOptionRecords.mat";
     const string MenuLabelMaterialPath = MaterialsFolder + "/MenuLabel.mat";
+    // The unlit material the drawn crack wears. Unlit because a crack is a mark
+    // on a face rather than a surface of its own — it must not turn with the key
+    // light, exactly as the sprite net it replaces never did — and one shared
+    // asset for every block, since the colour is per block and rides a property
+    // block (see Brick.ShowCrackLines).
+    const string CrackLineMaterialPath = MaterialsFolder + "/CrackLine.mat";
 
     // The nine block materials, one asset each. What a block is made of decides
     // both how it looks and how many hits it takes (BlockMaterials), so the look
@@ -2840,6 +2846,42 @@ public static class ArkanoidSetup
             return;
         }
 
+        // Stage 109: the crack's own material. One asset, unlit, white — the
+        // colour every block draws it in is a property block over the top.
+        if (AssetDatabase.LoadAssetAtPath<Material>(CrackLineMaterialPath) == null)
+        {
+            var crackLine = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            crackLine.SetColor("_BaseColor", Color.white);
+            AssetDatabase.CreateAsset(crackLine, CrackLineMaterialPath);
+            Debug.Log("[ArkanoidSetup] Stage 109: created the crack line material.");
+            return;
+        }
+
+        // Stage 110: hand it to every block prefab. Like the chip sprites, the
+        // field is private and is written through SerializedObject.
+        var crackless = BlockPrefabsMissingCrackLine();
+        if (crackless.Count > 0)
+        {
+            var material = AssetDatabase.LoadAssetAtPath<Material>(CrackLineMaterialPath);
+            if (material == null)
+            {
+                Debug.Log("[ArkanoidSetup] Crack line material not importable yet, waiting.");
+                return;
+            }
+            foreach (var prefabPath in crackless)
+            {
+                var root = PrefabUtility.LoadPrefabContents(prefabPath);
+                var so = new SerializedObject(root.GetComponent<Brick>());
+                so.FindProperty("crackLineMaterial").objectReferenceValue = material;
+                so.ApplyModifiedPropertiesWithoutUndo();
+                PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                PrefabUtility.UnloadPrefabContents(root);
+                AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceUpdate);
+            }
+            Debug.Log($"[ArkanoidSetup] Stage 110: wired the crack line material into {crackless.Count} block prefab(s).");
+            return;
+        }
+
         // Stage 108: tell each block prefab what its own outline is, which is
         // the one thing the damage carver cannot read off a mesh (see
         // BlockDamage.Build). Two facts per prefab: the outline's corner radius
@@ -2860,11 +2902,39 @@ public static class ArkanoidSetup
     // writes: corner radius in world units, and whether the shape is carved.
     static readonly (string Prefab, float Radius, bool Carves)[] BlockOutlines =
     {
-        (BrickPrefabPath, 0f, true),
-        (HalfBrickPrefabPath, 0f, true),
+        // The two box blocks' corners are rounded by the bevel their own mesh
+        // carries (BuildWorldUvBoxMesh cuts every edge back by BlockBevel, which
+        // takes the corners with it), so the carver has to round them by the same
+        // amount or a block squares off its corners the moment it takes its first
+        // hit — which is exactly what a player reported seeing.
+        //
+        // Root two times the bevel, not the bevel: three chamfers meeting at a
+        // corner cut it off along the *diagonal*, so the flat they leave is
+        // wider than any one of them by that factor. Measured against the
+        // prefab's own corner, pixel row by pixel row, at a magnification where
+        // one is six pixels across: the bevel on its own drew three.
+        (BrickPrefabPath, BlockBevel * 1.414f, true),
+        (HalfBrickPrefabPath, BlockBevel * 1.414f, true),
         (RoundedBrickPrefabPath, RoundedBrickCornerRadius, true),
         (RoundBrickPrefabPath, 0f, false),
     };
+
+    // Every block prefab whose crack line material is not wired yet.
+    static List<string> BlockPrefabsMissingCrackLine()
+    {
+        var missing = new List<string>();
+        var material = AssetDatabase.LoadAssetAtPath<Material>(CrackLineMaterialPath);
+        foreach (var (path, _, _) in BlockOutlines)
+        {
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            var brick = prefab != null ? prefab.GetComponent<Brick>() : null;
+            if (brick == null) continue;
+            var wired = new SerializedObject(brick)
+                .FindProperty("crackLineMaterial").objectReferenceValue as Material;
+            if (wired == null || (material != null && wired != material)) missing.Add(path);
+        }
+        return missing;
+    }
 
     static string FirstBlockPrefabMissingOutline()
     {

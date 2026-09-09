@@ -178,6 +178,7 @@ MonoBehaviour:
   - {fileID: 21300000, guid: 9b5f647048d7b4423876b77aeca5f859, type: 3}
   - {fileID: 21300000, guid: e3ba7c4bba1d84cd6bf33f93d4aabfa2, type: 3}
   - {fileID: 21300000, guid: 1805ddbd28a394ad1967dc44c5f250be, type: 3}
+  crackLineMaterial: {fileID: 2100000, guid: 8c182b2f39a7a4158b90cd9d797d1970, type: 2}
 --- !u!1 &9180228658402926582
 GameObject:
   m_ObjectHideFlags: 0

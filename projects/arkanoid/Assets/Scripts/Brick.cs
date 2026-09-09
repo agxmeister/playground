@@ -47,6 +47,7 @@ public class Brick : MonoBehaviour
     // shapes to pick from rather than a sequence of stages, and a block that
     // has been hit three times wears three of them.
     [SerializeField] Sprite[] chipSprites;
+    [SerializeField] Material crackLineMaterial;
 
     // How many steps of wear the net is drawn in. Four rather than the old
     // two, because a Neutronium slab owes ten hits and a two-stage overlay
@@ -145,6 +146,20 @@ public class Brick : MonoBehaviour
     // have already gone. Both are made on the first hit.
     BlockDamage.Shards shards;
     bool[] shardGone;
+
+    // The pieces that have cracked but not yet fallen. Kept apart from
+    // shardGone rather than folded into one three-state array, because the two
+    // are asked different questions in different places: the mesh needs to know
+    // which cells to drop and which to sink, and the shedding pass needs the
+    // list of pieces it owes the player.
+    bool[] shardLoose;
+
+    // The ribbon the crack is drawn as, and the unlit material it wears
+    // (wired by stage 110). A child object rather than part of the block,
+    // because the whole point is that the block's own mesh is not touched while
+    // it is only cracked — see BlockDamage.BuildCrackLines.
+    Transform crackLines;
+    Mesh crackLineMesh;
     readonly List<BlockDamage.Bite> bites = new List<BlockDamage.Bite>();
     Mesh damagedMesh;
     // The space the prefab's own mesh is authored in — a unit cube for the box
@@ -169,12 +184,12 @@ public class Brick : MonoBehaviour
     Color faceColor = Color.white;
 
     // Whether this block sheds pieces, which takes *both* halves agreeing: the
-    // material has to be one that comes apart rather than crazes (Ceramics, see
-    // BlockMaterials.ComesApart) and the shape has to be one the pieces can be
-    // cut out of (`carvesDamage` — every block but the round one, whose face is
-    // a sphere). A block that fails either test wears the crack net drawn on
-    // its face and shatters into cube rubble, which is what every block did
-    // before pieces existed.
+    // material has to be one that comes apart rather than crazes (Ceramics and
+    // Crystal, see BlockMaterials.ComesApart) and the shape has to be one the
+    // pieces can be cut out of (`carvesDamage` — every block but the round one,
+    // whose face is a sphere). A block that fails either test wears the crack
+    // net drawn on its face and shatters into cube rubble, which is what every
+    // block did before pieces existed.
     bool ComesApart => carvesDamage && BlockMaterials.ComesApart(Material);
 
     // Shape times material. Nothing stores this: both halves can be set in
@@ -447,6 +462,19 @@ public class Brick : MonoBehaviour
     // on the first hit it took.
     const float BiteOfChip = 0.35f;
 
+    // The health a block has to be down to before a piece actually leaves it.
+    // Above this the hit only *cracks* the piece it landed on — the piece is
+    // outlined on the face and stays where it is (BlockDamage.LooseSink); at
+    // this point and below, everything cracked comes away and every further hit
+    // takes its piece there and then.
+    //
+    // Half, so a block's life reads in two halves: it is a block with cracks in
+    // it, and then it is a block with pieces missing. Two states rather than
+    // one gradient is the point — the first half tells the player *which* piece
+    // is going before it goes, which is a thing the old shed-on-every-hit
+    // version never said.
+    const float ShedsBelowHealth = 0.5f;
+
     // The block's shape after this hit. Cheap to say and not cheap to do — a
     // slab's damaged mesh is a few thousand vertices — so it happens once per
     // hit and never per frame, and the mesh it replaces is destroyed rather
@@ -489,8 +517,9 @@ public class Brick : MonoBehaviour
         // same way — and so two blocks side by side never break alike.
         shards ??= BlockDamage.Shards.Build(
             Mathf.RoundToInt(transform.position.x * 613f + transform.position.y * 271f),
-            halfLocal, Mathf.Clamp(Hardness, 3, 8));
+            halfLocal, Mathf.Clamp(Hardness, 3, 8), BlockMaterials.EdgeOf(Material));
         shardGone ??= new bool[shards.Sites.Length];
+        shardLoose ??= new bool[shards.Sites.Length];
 
         // The piece the ball just knocked off — the one nearest where it
         // landed that is still there. It is thrown *before* the block is
@@ -503,16 +532,52 @@ public class Brick : MonoBehaviour
         // the two apart in the air. That does mean a hit which breaks nothing
         // can still pay — see GameManager.DebrisPoints for what a catch is
         // worth, and note that the paddle has to leave the ball to collect it.
+        // Which half of its life the block is in, which is the whole of the
+        // difference between a crack and a hole (see ShedsBelowHealth).
+        bool sheds = Hardness - damage <= Hardness * ShedsBelowHealth;
+
         if (at.HasValue)
         {
-            int loose = shards.NearestStanding(localHit, shardGone);
-            if (loose >= 0)
+            int struck = shards.NearestStanding(localHit, shardGone);
+            if (struck >= 0 && !sheds)
             {
-                shardGone[loose] = true;
-                Shed(loose, worldSize, localHit,
-                    GameManager.Instance != null ? GameManager.Instance.Catcher : null);
+                // Cracked, not taken: the piece the ball landed on is drawn on
+                // the face and goes nowhere yet. Nothing is thrown, because
+                // nothing has come off — a flake of glaze is what a hit at this
+                // stage costs, and Chip has already thrown that.
+                //
+                // And the block's own mesh is left exactly as it was: the crack
+                // is a ribbon in front of the face, so a hit that only cracks
+                // cannot change the block's silhouette, its edges or its grain.
+                shardLoose[struck] = true;
+                ShowCrackLines(worldSize);
+                return;
+            }
+            else if (struck >= 0)
+            {
+                // Past the halfway mark. Everything that was cracked comes away
+                // at once — the crack was the promise and this is it kept — and
+                // so does the piece just struck, which by then may be the only
+                // one left standing.
+                var catcher = GameManager.Instance != null ? GameManager.Instance.Catcher : null;
+                for (int i = 0; i < shardLoose.Length; i++)
+                {
+                    if (!shardLoose[i] || shardGone[i]) continue;
+                    shardLoose[i] = false;
+                    shardGone[i] = true;
+                    Shed(i, worldSize, localHit, catcher);
+                }
+                if (!shardGone[struck])
+                {
+                    shardGone[struck] = true;
+                    Shed(struck, worldSize, localHit, catcher);
+                }
             }
         }
+
+        // Past the crack stage the ribbon has nothing left to promise: the
+        // pieces it outlined are the holes now.
+        HideCrackLines();
 
         var carved = BlockDamage.BuildBlock(
             bodyLocalSize, worldSize, bites, outlineCornerRadius, shards, shardGone);
@@ -522,6 +587,50 @@ public class Brick : MonoBehaviour
         filter.sharedMesh = damagedMesh;
 
 
+    }
+
+    // The crack, redrawn for whatever is loose now. The mesh belongs to this
+    // instance exactly as the damaged mesh does, and is freed the same way.
+    void ShowCrackLines(Vector3 worldSize)
+    {
+        var lines = BlockDamage.BuildCrackLines(
+            bodyLocalSize, worldSize, bites, outlineCornerRadius, shards, shardLoose);
+        if (lines == null) return;
+
+        if (crackLines == null)
+        {
+            var node = new GameObject("CrackLines");
+            crackLines = node.transform;
+            crackLines.SetParent(transform, false);
+            crackLines.localPosition = Vector3.zero;
+            crackLines.localRotation = Quaternion.identity;
+            crackLines.localScale = Vector3.one;
+            node.AddComponent<MeshFilter>();
+            var renderer = node.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = crackLineMaterial;
+            // A crack is a mark on a face, not a thing in the room: it casts
+            // nothing and catches nothing, exactly as the drawn net never did.
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+        }
+
+        if (crackLineMesh != null) Destroy(crackLineMesh);
+        crackLineMesh = lines;
+        crackLines.GetComponent<MeshFilter>().sharedMesh = crackLineMesh;
+
+        // The block's own colour at the same darkness the drawn net used, so a
+        // crack in a magenta block is a darker magenta and not a grey line.
+        var properties = new MaterialPropertyBlock();
+        properties.SetColor("_BaseColor", CrackTint().linear);
+        crackLines.GetComponent<MeshRenderer>().SetPropertyBlock(properties);
+    }
+
+    void HideCrackLines()
+    {
+        if (crackLines != null) Destroy(crackLines.gameObject);
+        crackLines = null;
+        if (crackLineMesh != null) Destroy(crackLineMesh);
+        crackLineMesh = null;
     }
 
     // One piece off the block and into the world: built out of the same cells
@@ -575,6 +684,11 @@ public class Brick : MonoBehaviour
     // blocks taking two hits each would leak seventy of them.
     void ReleaseDamage()
     {
+        if (crackLineMesh != null)
+        {
+            Destroy(crackLineMesh);
+            crackLineMesh = null;
+        }
         if (damagedMesh == null) return;
         Destroy(damagedMesh);
         damagedMesh = null;

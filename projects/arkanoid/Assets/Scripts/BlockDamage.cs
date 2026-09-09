@@ -26,10 +26,38 @@ public static class BlockDamage
     // 0.025, where it was just visible on a long diagonal.
     const float CellSize = 0.018f;
 
-    // The chamfer around the front face's rim, matching the bevel the shared
-    // box mesh carries (ArkanoidSetup.BlockBevel), so a block does not visibly
-    // sharpen its edges the moment it takes its first hit.
-    const float RimChamfer = 0.03f;
+    // The bevel around the front face's rim, which has to be the same number
+    // ArkanoidSetup.BlockBevel is: this mesh replaces the prefab's bevelled box
+    // on a block's first hit, and anything the two disagree about is a change
+    // the player sees a block make when it should only have cracked.
+    //
+    // It is built the way the prefab builds it, and that shape is the whole
+    // point. The front face is inset by the bevel; a 45-degree strip runs from
+    // that inset edge out to the silhouette, ending one bevel deeper; the side
+    // wall starts there. **The strip's inner vertices carry the front face's
+    // normal and its outer ones the side's**, so the shading grades across the
+    // strip while the face and the side each stay flat — which is why this mesh
+    // sets its normals rather than calling RecalculateNormals.
+    //
+    // Two earlier attempts are worth knowing about, because both looked
+    // plausible and both were reported as a bug. A chamfer that pushed the rim
+    // nodes back in z and met the wall in a hard crease read as a *frame* — a
+    // bright line inside the top edge, a dark one down the sides. Removing it
+    // instead left the front face meeting a bare vertical wall, and a wall
+    // facing sideways gets nothing from a head-on key light, so perspective
+    // showed a raw unlit grey band down the end of every damaged block where the
+    // prefab shows a lit bevel.
+    const float RimBevel = 0.03f;
+
+    // How far in front of the face the drawn crack sits, in world units. Far
+    // enough not to z-fight with the face it lies on, near enough that no
+    // parallax shows at the angles this camera sees a block from.
+    const float CrackLift = 0.004f;
+
+    // How wide the drawn crack is, in cells. One is a hairline at the size a
+    // block is drawn; the ribbon is built on the cell grid because that is what
+    // the piece boundary is already measured on.
+    const int CrackCells = 1;
 
     // Ceilings on the grid, because a mesh rebuilt on every hit is a cost paid
     // during play. A 1.5 x 0.5 face at the density above comes to 60 x 20
@@ -70,7 +98,20 @@ public static class BlockDamage
         // piece ends up a sliver.
         const float SiteJitter = 0.3f;
 
-        public static Shards Build(int seed, Vector2 halfExtent, int count)
+        // How far the smooth style bends a border off the straight line the
+        // Voronoi would draw, as a share of one piece's own width, and how
+        // coarse that bending is. A conchoidal fracture curves over the *whole*
+        // piece rather than wobbling along it — one bow per border, not a
+        // ripple — so the lattice is deliberately coarser than the pieces are.
+        const float SmoothBow = 0.42f;
+        const int BowLattice = 5;
+
+        BreakEdge edge;
+        float bow;                 // in local units; zero for a sharp edge
+        float[,] bowX, bowY;
+        Vector2 half;
+
+        public static Shards Build(int seed, Vector2 halfExtent, int count, BreakEdge edge)
         {
             var random = new System.Random(seed);
             // Laid out along the block's own proportions, so a slab three times
@@ -92,14 +133,80 @@ public static class BlockDamage
                         -halfExtent.y + (j + 0.5f) * cellHeight
                             + (float)(random.NextDouble() * 2 - 1) * SiteJitter * cellHeight));
                 }
-            return new Shards { Sites = sites.ToArray() };
+            // The bow is measured against a piece, so it needs the piece's own
+            // size — which is only known here, where the grid was laid out.
+            float pieceWidth = halfExtent.x * 2f / columns;
+            float pieceHeight = halfExtent.y * 2f / rows;
+
+            return new Shards
+            {
+                Sites = sites.ToArray(),
+                edge = edge,
+                half = halfExtent,
+                bow = edge == BreakEdge.Smooth
+                    ? SmoothBow * Mathf.Min(pieceWidth, pieceHeight)
+                    : 0f,
+                bowX = edge == BreakEdge.Smooth ? Lattice(random) : null,
+                bowY = edge == BreakEdge.Smooth ? Lattice(random) : null,
+            };
         }
+
+        // A small square of random values, drawn from the same sequence the
+        // sites were, so a block that lays down the same pieces bends their
+        // borders the same way too.
+        static float[,] Lattice(System.Random random)
+        {
+            var values = new float[BowLattice, BowLattice];
+            for (int y = 0; y < BowLattice; y++)
+                for (int x = 0; x < BowLattice; x++)
+                    values[x, y] = (float)random.NextDouble() * 2f - 1f;
+            return values;
+        }
+
+        // The point a nearest-site test should actually be run at. For a sharp
+        // edge that is the point itself and every border comes out straight,
+        // which is what a cleavage plane is. For a smooth one the whole plane is
+        // dragged around by a slow noise before the test — a *domain warp* — so
+        // the borders bend without ever breaking or crossing: displacing the
+        // question rather than the answer cannot tear the partition, where
+        // moving the boundary itself could leave a piece with a hole in it.
+        Vector2 Warped(Vector2 point)
+        {
+            if (bow <= 0f) return point;
+            float u = Mathf.Clamp01((point.x + half.x) / Mathf.Max(half.x * 2f, 0.0001f));
+            float v = Mathf.Clamp01((point.y + half.y) / Mathf.Max(half.y * 2f, 0.0001f));
+            return point + new Vector2(Sample(bowX, u, v), Sample(bowY, u, v)) * bow;
+        }
+
+        static float Sample(float[,] values, float u, float v)
+        {
+            float x = u * (BowLattice - 1), y = v * (BowLattice - 1);
+            int x0 = Mathf.Clamp((int)x, 0, BowLattice - 1);
+            int y0 = Mathf.Clamp((int)y, 0, BowLattice - 1);
+            int x1 = Mathf.Min(x0 + 1, BowLattice - 1);
+            int y1 = Mathf.Min(y0 + 1, BowLattice - 1);
+            // Smoothstepped, so the lattice's own grid does not show through as
+            // creases — the same reason the fog's noise is (ArkanoidSetup).
+            float fx = Mathf.SmoothStep(0f, 1f, x - x0);
+            float fy = Mathf.SmoothStep(0f, 1f, y - y0);
+            return Mathf.Lerp(
+                Mathf.Lerp(values[x0, y0], values[x1, y0], fx),
+                Mathf.Lerp(values[x0, y1], values[x1, y1], fx),
+                fy);
+        }
+
+        public BreakEdge Edge => edge;
 
         Shards() { }
 
-        // Which piece a point belongs to.
+        // Which piece a point belongs to. Every caller goes through here — the
+        // block's own mask and a falling piece's alike — so the border a piece
+        // leaves behind and the border it carries are the same curve by
+        // construction, which is what makes the crack that outlines a loose
+        // piece a promise the block keeps (see Brick.Carve).
         public int At(Vector2 point)
         {
+            point = Warped(point);
             int nearest = 0;
             float best = float.MaxValue;
             for (int i = 0; i < Sites.Length; i++)
@@ -156,11 +263,132 @@ public static class BlockDamage
     // just stopped drawing, built as a mesh of their own and recentred on the
     // piece's own middle so it can be dropped into the world at `centre` and
     // tumble about itself.
+    // A piece is built flush rather than sunk however it stood: what it was
+    // doing on the block is a fact about the block, and in the air it is just a
+    // piece.
     public static Mesh BuildPiece(
         Vector3 localSize, Vector3 worldSize,
         IReadOnlyList<Bite> bites, float cornerRadius, Shards shards, int piece,
         out Vector3 centre) =>
         Build(localSize, worldSize, bites, cornerRadius, shards, null, piece, out centre);
+
+    // The crack, as a ribbon of its own laid just in front of the face: one
+    // cell wide, running along the border of every piece that has come loose
+    // but not yet fallen.
+    //
+    // **It is drawn rather than carved, and that is the whole shape of this
+    // feature.** Cutting the crack into the block meant rebuilding the block's
+    // mesh on a hit that was supposed to change nothing else, and the carver's
+    // mesh and the prefab's bevelled box could not be made to agree: five
+    // attempts at the rim each fixed what they aimed at and left something a
+    // player could see appear — a bright frame, a raw unlit side, a mirrored
+    // grain, a two-pixel line. A ribbon in front of the face cannot change the
+    // block's silhouette, its edges or its grain, because it does not touch the
+    // block at all. The mesh is still rebuilt when a piece actually *falls*,
+    // where a hole appearing is the point and covers the change.
+    //
+    // The boundary comes off the same `Shards.At` the hole will, so the crack is
+    // the exact shape of the piece that leaves next, and it bows on a ceramic
+    // and runs straight on a crystal for free (see BlockMaterials.EdgeOf).
+    //
+    // Never on the block's own rim: a cell only joins the ribbon where the
+    // neighbour it differs from is *inside* the outline, so the crack stops
+    // short of the edge rather than drawing a line along it.
+    public static Mesh BuildCrackLines(
+        Vector3 localSize, Vector3 worldSize,
+        IReadOnlyList<Bite> bites, float cornerRadius, Shards shards, bool[] loose)
+    {
+        if (shards == null || loose == null) return null;
+
+        var halfLocal = localSize * 0.5f;
+        var perWorld = new Vector3(
+            localSize.x / Mathf.Max(worldSize.x, 0.0001f),
+            localSize.y / Mathf.Max(worldSize.y, 0.0001f),
+            localSize.z / Mathf.Max(worldSize.z, 0.0001f));
+        int columns = Mathf.Clamp(Mathf.RoundToInt(worldSize.x / CellSize), 8, MostColumns);
+        int rows = Mathf.Clamp(Mathf.RoundToInt(worldSize.y / CellSize), 8, MostRows);
+
+        float Outline(Vector2 point)
+        {
+            var world = new Vector2(point.x / perWorld.x, point.y / perWorld.y);
+            var halfWorld = new Vector2(halfLocal.x / perWorld.x, halfLocal.y / perWorld.y);
+            var corner = new Vector2(
+                Mathf.Abs(world.x) - (halfWorld.x - cornerRadius),
+                Mathf.Abs(world.y) - (halfWorld.y - cornerRadius));
+            float inside = Mathf.Min(Mathf.Max(corner.x, corner.y), 0f);
+            float outside = new Vector2(Mathf.Max(corner.x, 0f), Mathf.Max(corner.y, 0f)).magnitude;
+            float distance = inside + outside - cornerRadius;
+            for (int i = 0; i < bites.Count; i++)
+            {
+                var at = new Vector2(bites[i].At.x / perWorld.x, bites[i].At.y / perWorld.y);
+                distance = Mathf.Max(distance,
+                    bites[i].Radius / perWorld.x - Vector2.Distance(world, at));
+            }
+            return distance;
+        }
+
+        Vector2 Middle(int i, int j) => new Vector2(
+            -halfLocal.x + (i + 0.5f) * (halfLocal.x * 2f / columns),
+            -halfLocal.y + (j + 0.5f) * (halfLocal.y * 2f / rows));
+
+        var owners = new int[columns * rows];
+        var inside2 = new bool[columns * rows];
+        for (int j = 0; j < rows; j++)
+            for (int i = 0; i < columns; i++)
+            {
+                var middle = Middle(i, j);
+                if (Outline(middle) >= 0f) continue;
+                inside2[j * columns + i] = true;
+                owners[j * columns + i] = shards.At(middle);
+            }
+
+        var vertices = new List<Vector3>();
+        var triangles = new List<int>();
+        float lift = CrackLift * perWorld.z;
+        float cellW = halfLocal.x * 2f / columns, cellH = halfLocal.y * 2f / rows;
+
+        for (int j = 0; j < rows; j++)
+            for (int i = 0; i < columns; i++)
+            {
+                int cell = j * columns + i;
+                if (!inside2[cell] || !loose[owners[cell]]) continue;
+
+                bool onBorder = false;
+                for (int d = -CrackCells; d <= CrackCells && !onBorder; d++)
+                    for (int e = -CrackCells; e <= CrackCells && !onBorder; e++)
+                    {
+                        int x = i + d, y = j + e;
+                        if (x < 0 || y < 0 || x >= columns || y >= rows) continue;
+                        int beside = y * columns + x;
+                        if (inside2[beside] && !loose[owners[beside]]) onBorder = true;
+                    }
+                if (!onBorder) continue;
+
+                float x0 = -halfLocal.x + i * cellW, y0 = -halfLocal.y + j * cellH;
+                float z = -halfLocal.z - lift;
+                int a = vertices.Count;
+                vertices.Add(new Vector3(x0, y0, z));
+                vertices.Add(new Vector3(x0 + cellW, y0, z));
+                vertices.Add(new Vector3(x0 + cellW, y0 + cellH, z));
+                vertices.Add(new Vector3(x0, y0 + cellH, z));
+                triangles.Add(a); triangles.Add(a + 3); triangles.Add(a + 2);
+                triangles.Add(a); triangles.Add(a + 2); triangles.Add(a + 1);
+            }
+
+        if (vertices.Count == 0) return null;
+
+        var mesh = new Mesh { name = "BlockCrackLines" };
+        mesh.indexFormat = vertices.Count > 65000
+            ? UnityEngine.Rendering.IndexFormat.UInt32
+            : UnityEngine.Rendering.IndexFormat.UInt16;
+        mesh.SetVertices(vertices);
+        mesh.SetTriangles(triangles, 0);
+        var normals = new List<Vector3>(vertices.Count);
+        for (int i = 0; i < vertices.Count; i++) normals.Add(Vector3.back);
+        mesh.SetNormals(normals);
+        mesh.RecalculateBounds();
+        return mesh;
+    }
 
     // `piece` of -1 builds the block (every standing shard); anything else
     // builds that one shard alone and answers where it sat.
@@ -177,34 +405,111 @@ public static class BlockDamage
             localSize.y / Mathf.Max(worldSize.y, 0.0001f),
             localSize.z / Mathf.Max(worldSize.z, 0.0001f));
 
+        // A vertex's UV, in the frame the prefab's own mesh uses
+        // (ArkanoidSetup.BuildWorldUvBoxMesh): a UV unit is a world unit, the u
+        // axis is picked per face, and **v is `cross(normal, u)`**.
+        //
+        // That cross product is the whole of why this exists. Taking the front
+        // face's v as +Y — the obvious choice — mirrors the grain vertically
+        // against the prefab's -Y *and* flips the tangent frame's handedness,
+        // which inverts the normal map: every facet that stood proud reads as a
+        // pit. On screen that is not a subtle difference, it is a different
+        // texture, and it was reported as one.
+        Vector3 UAxisFor(Vector3 normal)
+        {
+            if (Mathf.Abs(normal.z) > 0.5f) return normal.z < 0f ? Vector3.right : Vector3.left;
+            if (Mathf.Abs(normal.y) >= Mathf.Abs(normal.x)) return Vector3.right;
+            return normal.x >= 0f ? Vector3.forward : Vector3.back;
+        }
+
+        Vector2 UvFor(Vector3 local, Vector3 normal)
+        {
+            var world = new Vector3(
+                local.x / Mathf.Max(perWorld.x, 0.0001f),
+                local.y / Mathf.Max(perWorld.y, 0.0001f),
+                local.z / Mathf.Max(perWorld.z, 0.0001f));
+            var u = UAxisFor(normal);
+            var v = Vector3.Cross(normal, u);
+            return new Vector2(Vector3.Dot(world, u), Vector3.Dot(world, v));
+        }
+
         int columns = Mathf.Clamp(Mathf.RoundToInt(worldSize.x / CellSize), 8, MostColumns);
         int rows = Mathf.Clamp(Mathf.RoundToInt(worldSize.y / CellSize), 8, MostRows);
 
-        // The outline as a signed distance: negative inside, and a bite is a
+        // The outline as a signed distance, negative inside, and a bite is a
         // disc subtracted from it. Doing the shape this way rather than as a
         // list of cells is what lets the rim chamfer and the cell mask come off
         // the same function — the chamfer is just "how far inside the boundary
         // is this node", whatever shape a hit has left the boundary in.
+        //
+        // **Measured in world units, not in the mesh's own space**, and that is
+        // the one correction this had to have. A box block's local space is a
+        // unit cube under a non-uniform scale, so one world unit is a different
+        // number of local units on every axis: on a block scaled (1.5, 0.5, 0.6)
+        // a radius of 0.03 world is 0.02 local across and 0.06 local up. The
+        // first version inset by the *y*-scaled radius and inflated by the
+        // *x*-scaled one, which cut 0.02 of a world unit off the top and bottom
+        // edges — harmless for as long as the two box blocks' radius was zero,
+        // and three pixels of missing silhouette the moment it was not. It
+        // presented as the block changing shape on its first hit.
         float Outline(Vector2 point)
         {
+            var world = new Vector2(point.x / perWorld.x, point.y / perWorld.y);
+            var halfWorld = new Vector2(halfLocal.x / perWorld.x, halfLocal.y / perWorld.y);
             var corner = new Vector2(
-                Mathf.Abs(point.x) - (halfLocal.x - cornerRadius * perWorld.x),
-                Mathf.Abs(point.y) - (halfLocal.y - cornerRadius * perWorld.y));
+                Mathf.Abs(world.x) - (halfWorld.x - cornerRadius),
+                Mathf.Abs(world.y) - (halfWorld.y - cornerRadius));
             float inside = Mathf.Min(Mathf.Max(corner.x, corner.y), 0f);
             float outside = new Vector2(Mathf.Max(corner.x, 0f), Mathf.Max(corner.y, 0f)).magnitude;
-            float distance = inside + outside - cornerRadius * perWorld.x;
+            float distance = inside + outside - cornerRadius;
 
+            // A bite is authored in local units (Brick.Carve scales it by the
+            // block's own x), so it makes the same trip.
             for (int i = 0; i < bites.Count; i++)
-                distance = Mathf.Max(distance, bites[i].Radius - Vector2.Distance(point, bites[i].At));
+            {
+                var at = new Vector2(
+                    bites[i].At.x / perWorld.x, bites[i].At.y / perWorld.y);
+                distance = Mathf.Max(distance,
+                    bites[i].Radius / perWorld.x - Vector2.Distance(world, at));
+            }
             return distance;
         }
 
-        float chamfer = RimChamfer * perWorld.x;
-        float chamferDepth = RimChamfer * perWorld.z;
+        float bevelDepth = RimBevel * perWorld.z;
+
+        Vector2 CellMiddle(int i, int j) => new Vector2(
+            -halfLocal.x + (i + 0.5f) * (halfLocal.x * 2f / columns),
+            -halfLocal.y + (j + 0.5f) * (halfLocal.y * 2f / rows));
 
         var nodes = new Vector3[(columns + 1) * (rows + 1)];
         var nodeUvs = new Vector2[nodes.Length];
         int Index(int i, int j) => j * (columns + 1) + i;
+
+        // A node on the grid's outer ring, pulled onto the outline itself. The
+        // corner rounding cannot come out of the cell mask: a radius of 0.03
+        // world is 1.7 cells, and the mask samples cell *centres*, so the arc
+        // passes three ten-thousandths outside the corner cell's centre and
+        // rounds nothing whatever — computed, after a magnified capture showed
+        // square corners where the prefab's bevel gives rounded ones. Moving the
+        // ring's own nodes is what the grid *can* express: away from a corner
+        // the projection lands a node exactly where it already was, and at one
+        // it draws the arc in a few segments.
+        Vector2 OnOutline(Vector2 local)
+        {
+            if (cornerRadius <= 0f) return local;
+            var world = new Vector2(local.x / perWorld.x, local.y / perWorld.y);
+            var inner = new Vector2(
+                halfLocal.x / perWorld.x - cornerRadius,
+                halfLocal.y / perWorld.y - cornerRadius);
+            if (inner.x <= 0f || inner.y <= 0f) return local;
+            var nearest = new Vector2(
+                Mathf.Clamp(world.x, -inner.x, inner.x),
+                Mathf.Clamp(world.y, -inner.y, inner.y));
+            var away = world - nearest;
+            if (away.sqrMagnitude <= 0.0000001f) return local;
+            var snapped = nearest + away.normalized * cornerRadius;
+            return new Vector2(snapped.x * perWorld.x, snapped.y * perWorld.y);
+        }
 
         for (int j = 0; j <= rows; j++)
             for (int i = 0; i <= columns; i++)
@@ -212,19 +517,47 @@ public static class BlockDamage
                 var point = new Vector2(
                     -halfLocal.x + i * (halfLocal.x * 2f / columns),
                     -halfLocal.y + j * (halfLocal.y * 2f / rows));
+                if (i == 0 || j == 0 || i == columns || j == rows) point = OnOutline(point);
 
-                // Into the block from the front face: the rim's chamfer, and
-                // nothing else. The face a block shows is flat — what says it
-                // is damaged is the pieces missing from it, not anything cut
-                // into what is left.
-                float inward = -Outline(point);
-                float rim = inward < chamfer ? (chamfer - Mathf.Max(inward, 0f)) : 0f;
+                // The face is flat. What says a block is damaged is the pieces
+                // missing from it, not anything cut into what is left.
+                nodes[Index(i, j)] = new Vector3(point.x, point.y, -halfLocal.z);
+                nodeUvs[Index(i, j)] = UvFor(nodes[Index(i, j)], Vector3.back);
+            }
 
-                nodes[Index(i, j)] = new Vector3(
-                    point.x, point.y,
-                    -halfLocal.z + rim * (chamferDepth / Mathf.Max(chamfer, 0.0001f)));
-                nodeUvs[Index(i, j)] = new Vector2(
-                    point.x / perWorld.x, point.y / perWorld.y);
+        // The rim, as two rings. `nodes` keeps the front face, which is inset by
+        // the bevel; `rimOuter` holds the silhouette itself, one bevel deeper,
+        // and is what the strip runs out to and the side wall starts from. Only
+        // the grid's own boundary is treated this way: an edge a *bite* has cut
+        // into the block is a break and gets the hard wall below, because a
+        // broken edge should look broken.
+        var rimOuter = new Vector3[nodes.Length];
+        var isRim = new bool[nodes.Length];
+        for (int j = 0; j <= rows; j++)
+            for (int i = 0; i <= columns; i++)
+            {
+                if (i != 0 && j != 0 && i != columns && j != rows) continue;
+                int node = Index(i, j);
+                var point = nodes[node];
+                var world = new Vector2(point.x / perWorld.x, point.y / perWorld.y);
+                var inner = new Vector2(
+                    halfLocal.x / perWorld.x - cornerRadius,
+                    halfLocal.y / perWorld.y - cornerRadius);
+                var nearest = new Vector2(
+                    Mathf.Clamp(world.x, -inner.x, inner.x),
+                    Mathf.Clamp(world.y, -inner.y, inner.y));
+                var away = world - nearest;
+                var outward = away.sqrMagnitude > 0.0000001f
+                    ? away.normalized
+                    : new Vector2(i == 0 ? -1f : i == columns ? 1f : 0f,
+                        j == 0 ? -1f : j == rows ? 1f : 0f).normalized;
+
+                isRim[node] = true;
+                rimOuter[node] = new Vector3(point.x, point.y, point.z + bevelDepth);
+                var inset = world - outward * RimBevel;
+                nodes[node] = new Vector3(
+                    inset.x * perWorld.x, inset.y * perWorld.y, point.z);
+                nodeUvs[node] = UvFor(nodes[node], Vector3.back);
             }
 
         // Whether each cell is still there, measured at its own centre.
@@ -232,9 +565,7 @@ public static class BlockDamage
         for (int j = 0; j < rows; j++)
             for (int i = 0; i < columns; i++)
             {
-                var middle = new Vector2(
-                    -halfLocal.x + (i + 0.5f) * (halfLocal.x * 2f / columns),
-                    -halfLocal.y + (j + 0.5f) * (halfLocal.y * 2f / rows));
+                var middle = CellMiddle(i, j);
                 if (Outline(middle) >= 0f) continue;
 
                 // Which piece this cell belongs to decides whether it is drawn
@@ -247,12 +578,26 @@ public static class BlockDamage
 
         var vertices = new List<Vector3>();
         var uvs = new List<Vector2>();
+        var normals = new List<Vector3>();
+        var tangents = new List<Vector4>();
         var triangles = new List<int>();
 
-        int Add(Vector3 position, Vector2 uv)
+        // Normals *and* tangents are set rather than recalculated. The normals
+        // because the rim's shading depends on which surface each vertex belongs
+        // to, which an average over shared vertices cannot express; the tangents
+        // because the grain rides a normal map, and a map's perturbation is only
+        // as good as the frame it is applied in.
+        //
+        // The tangent is the same u axis the UV was measured along, with w of 1
+        // because `UvFor` builds v as `cross(normal, u)` — so the frame the
+        // shader reconstructs is exactly the frame the UVs were written in.
+        int Add(Vector3 position, Vector2 uv, Vector3 normal)
         {
+            var u = UAxisFor(normal);
             vertices.Add(position);
             uvs.Add(uv);
+            normals.Add(normal);
+            tangents.Add(new Vector4(u.x, u.y, u.z, 1f));
             return vertices.Count - 1;
         }
 
@@ -262,23 +607,22 @@ public static class BlockDamage
             triangles.Add(a); triangles.Add(c); triangles.Add(d);
         }
 
-        // The front face. Its nodes are shared between neighbouring cells, so
-        // a groove comes out as one continuous valley rather than as a row of
-        // separate pits.
         var frontIndex = new int[nodes.Length];
         for (int n = 0; n < nodes.Length; n++) frontIndex[n] = -1;
         for (int j = 0; j < rows; j++)
             for (int i = 0; i < columns; i++)
             {
                 if (!solid[j * columns + i]) continue;
-                int a = Corner(i, j), b = Corner(i + 1, j), c = Corner(i + 1, j + 1), d = Corner(i, j + 1);
+                int a = Corner(i, j), b = Corner(i + 1, j);
+                int c = Corner(i + 1, j + 1), d = Corner(i, j + 1);
                 Quad(a, d, c, b);
             }
 
         int Corner(int i, int j)
         {
             int node = Index(i, j);
-            if (frontIndex[node] < 0) frontIndex[node] = Add(nodes[node], nodeUvs[node]);
+            if (frontIndex[node] < 0)
+                frontIndex[node] = Add(nodes[node], nodeUvs[node], Vector3.back);
             return frontIndex[node];
         }
 
@@ -293,8 +637,8 @@ public static class BlockDamage
             if (backIndex[node] < 0)
             {
                 var front = nodes[node];
-                backIndex[node] = Add(
-                    new Vector3(front.x, front.y, halfLocal.z), nodeUvs[node]);
+                var back = new Vector3(front.x, front.y, halfLocal.z);
+                backIndex[node] = Add(back, UvFor(back, Vector3.forward), Vector3.forward);
             }
             return backIndex[node];
         }
@@ -312,38 +656,93 @@ public static class BlockDamage
         // the block's own outline or the inside of a notch. Drawn with their
         // own vertices so the wall meets the face in a hard edge rather than
         // smearing the face's shading round the corner.
-        float depthUv = worldSize.z;
+        bool Beside(int i, int j) =>
+            i >= 0 && j >= 0 && i < columns && j < rows && solid[j * columns + i];
+
+        // A wall stands wherever a cell has nothing beside it — the block's own
+        // boundary, or the inside of a hole a piece left.
+        void Side(int i, int j, int di, int dj, int from, int to)
+        {
+            if (Beside(i + di, j + dj)) return;
+            if (isRim[from] && isRim[to]) Rim(from, to);
+            else Wall(from, to);
+        }
+
         for (int j = 0; j < rows; j++)
             for (int i = 0; i < columns; i++)
             {
                 if (!solid[j * columns + i]) continue;
-                bool left = i == 0 || !solid[j * columns + i - 1];
-                bool right = i == columns - 1 || !solid[j * columns + i + 1];
-                bool down = j == 0 || !solid[(j - 1) * columns + i];
-                bool up = j == rows - 1 || !solid[(j + 1) * columns + i];
-
-                if (left) Wall(Index(i, j + 1), Index(i, j));
-                if (right) Wall(Index(i + 1, j), Index(i + 1, j + 1));
-                if (down) Wall(Index(i, j), Index(i + 1, j));
-                if (up) Wall(Index(i + 1, j + 1), Index(i, j + 1));
+                Side(i, j, -1, 0, Index(i, j + 1), Index(i, j));
+                Side(i, j, 1, 0, Index(i + 1, j), Index(i + 1, j + 1));
+                Side(i, j, 0, -1, Index(i, j), Index(i + 1, j));
+                Side(i, j, 0, 1, Index(i + 1, j + 1), Index(i, j + 1));
             }
 
-        // One wall panel, from the front node `from` to `to` and back to the
-        // rear plane. The order the two nodes are given in is what faces it
-        // outward, which is why each of the four sides above passes its own.
+        // The block's own edge: a 45-degree strip from the inset face out to the
+        // silhouette, then the side wall from there to the back. The strip's
+        // inner vertices take the face's normal and its outer ones the side's,
+        // which is what grades the shading across it and leaves the face and the
+        // side flat — the prefab's bevel, built the same way (see RimBevel).
+        void Rim(int from, int to)
+        {
+            var faceFrom = nodes[from];
+            var faceTo = nodes[to];
+            var edgeFrom = rimOuter[from];
+            var edgeTo = rimOuter[to];
+
+            // Outward, in the face's plane: the side's own normal, and the one
+            // the strip grades into.
+            var along = edgeTo - edgeFrom;
+            var outward = Vector3.Cross(along, Vector3.forward).normalized;
+            if (outward.sqrMagnitude < 0.5f) outward = Vector3.up;
+
+            // The strip borrows the front face's frame for all four of its
+            // vertices, exactly as the prefab's bevel strips borrow one of the
+            // faces they touch: it is one bevel wide and no grain at this scale
+            // reads the seam that leaves.
+            int a = Add(faceFrom, UvFor(faceFrom, Vector3.back), Vector3.back);
+            int b = Add(faceTo, UvFor(faceTo, Vector3.back), Vector3.back);
+            // The strip takes the *face's* normal all the way across rather than
+            // grading into the side's. Graded, it came out about seven per cent
+            // brighter than the face at its peak and read as a light frame
+            // drawn round every damaged block — measured, 204 against the face's
+            // 190. Flat, it is the face carried out to the silhouette, and what
+            // little of the side the perspective still shows is one bevel
+            // further back than it was.
+            int c = Add(edgeTo, UvFor(edgeTo, Vector3.back), Vector3.back);
+            int d = Add(edgeFrom, UvFor(edgeFrom, Vector3.back), Vector3.back);
+            Quad(a, b, c, d);
+
+            // And the side, from the strip's far edge straight back. Flat, and
+            // at the silhouette rather than at the inset face, so the block is
+            // exactly as wide as it was.
+            var backFrom = new Vector3(edgeFrom.x, edgeFrom.y, halfLocal.z);
+            var backTo = new Vector3(edgeTo.x, edgeTo.y, halfLocal.z);
+            int e = Add(edgeFrom, UvFor(edgeFrom, outward), outward);
+            int f = Add(edgeTo, UvFor(edgeTo, outward), outward);
+            int g = Add(backTo, UvFor(backTo, outward), outward);
+            int h = Add(backFrom, UvFor(backFrom, outward), outward);
+            Quad(e, f, g, h);
+        }
+
+        // A hole's wall: from the face straight back through the block, with its
+        // own vertices and its own flat normal, so it meets the face in a hard
+        // edge. That is what a break should look like, and it is the opposite of
+        // what the rim wants (see Rim).
         void Wall(int from, int to)
         {
             var frontFrom = nodes[from];
             var frontTo = nodes[to];
-            float along = Vector3.Distance(frontFrom, frontTo) / Mathf.Max(perWorld.x, 0.0001f);
-            var baseUv = nodeUvs[from];
+            var farFrom = new Vector3(frontFrom.x, frontFrom.y, halfLocal.z);
+            var farTo = new Vector3(frontTo.x, frontTo.y, halfLocal.z);
 
-            int a = Add(frontFrom, baseUv);
-            int b = Add(frontTo, new Vector2(baseUv.x + along, baseUv.y));
-            int c = Add(new Vector3(frontTo.x, frontTo.y, halfLocal.z),
-                new Vector2(baseUv.x + along, baseUv.y + depthUv));
-            int d = Add(new Vector3(frontFrom.x, frontFrom.y, halfLocal.z),
-                new Vector2(baseUv.x, baseUv.y + depthUv));
+            var outward = Vector3.Cross(frontTo - frontFrom, farFrom - frontFrom).normalized;
+            if (outward.sqrMagnitude < 0.5f) outward = Vector3.back;
+
+            int a = Add(frontFrom, UvFor(frontFrom, outward), outward);
+            int b = Add(frontTo, UvFor(frontTo, outward), outward);
+            int c = Add(farTo, UvFor(farTo, outward), outward);
+            int d = Add(farFrom, UvFor(farFrom, outward), outward);
             Quad(a, b, c, d);
         }
 
@@ -368,12 +767,10 @@ public static class BlockDamage
             : UnityEngine.Rendering.IndexFormat.UInt16;
         mesh.SetVertices(vertices);
         mesh.SetUVs(0, uvs);
+        mesh.SetNormals(normals);
+        mesh.SetTangents(tangents);
         mesh.SetTriangles(triangles, 0);
-        mesh.RecalculateNormals();
-        // The grain rides a normal map, and a normal map is meaningless without
-        // a tangent frame — the same trap stage 92 exists to avoid on the
-        // texture side.
-        mesh.RecalculateTangents();
+
         mesh.RecalculateBounds();
         return mesh;
     }

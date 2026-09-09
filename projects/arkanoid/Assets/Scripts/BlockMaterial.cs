@@ -95,9 +95,38 @@ public static class BlockMaterials
     // are different facts about a substance and the next material will want one
     // without the other: Crystal should shatter into pieces without ever
     // shedding the fine glaze grit a chip throws.
-    public static bool ComesApart(BlockMaterial material) => material == BlockMaterial.Ceramics;
+    public static bool ComesApart(BlockMaterial material) =>
+        material == BlockMaterial.Ceramics || material == BlockMaterial.Crystal;
+
+    // How a piece's boundary runs, which is the one thing the two materials
+    // that come apart disagree about. A fired glaze fails in a *conchoidal*
+    // fracture — the shell-shaped, curving break a brittle amorphous solid
+    // makes — so a ceramic's pieces have bowed borders. A crystal has cleavage
+    // planes and breaks along them, so its pieces are straight-edged polygons
+    // meeting at corners, which is the same fact about the substance its grain
+    // is built out of (see ArkanoidSetup.CrystalGrains: the surface is a
+    // partition into flat facets for exactly this reason).
+    //
+    // Not folded into ComesApart, for the reason ComesApart is not folded into
+    // Chips: these are separate facts about a substance, and the next brittle
+    // material will want to pick its own answer to each.
+    public static BreakEdge EdgeOf(BlockMaterial material) =>
+        material == BlockMaterial.Crystal ? BreakEdge.Sharp : BreakEdge.Smooth;
 
     // How many materials there are, for the array of assets GameManager holds
     // and the setup stage that fills it.
     public const int Count = (int)BlockMaterial.Neutronium + 1;
+}
+
+// Which way a piece's border runs when a block comes apart
+// (BlockMaterials.EdgeOf). Top level beside BlockMaterial rather than nested in
+// BlockMaterials, because both the geometry (BlockDamage.Shards) and the block
+// itself name it.
+public enum BreakEdge
+{
+    // Curved and organic: the conchoidal fracture of a glaze or a glass.
+    Smooth,
+    // Straight lines meeting at angles: a mineral parting on its cleavage
+    // planes.
+    Sharp,
 }

@@ -3020,8 +3020,8 @@ MonoBehaviour:
     - {fileID: 2800000, guid: 6dbb3480a94da4fa3983093f30077049, type: 3}
     darkest: {r: 0.2, g: 0.13, b: 0.34, a: 0.62}
     lightest: {r: 0.9, g: 0.94, b: 0.975, a: 0.74}
-    darkSmoothness: 0.95
-    lightSmoothness: 0.8
+    darkSmoothness: 0.84
+    lightSmoothness: 0.62
     hueJitter: 0.045
   paddle: {fileID: 887666782}
   scoreBoard: {fileID: 685092864}
