@@ -591,6 +591,12 @@ public static class BlockDamage
         // The tangent is the same u axis the UV was measured along, with w of 1
         // because `UvFor` builds v as `cross(normal, u)` — so the frame the
         // shader reconstructs is exactly the frame the UVs were written in.
+        //
+        // One normal per vertex does both jobs, and it has to: it is the frame
+        // the UV and the tangent were written in *and* what the surface is lit
+        // as. A caller that wants a surface lit as a face it does not belong to
+        // — the rim's side wall does — passes that face's normal here and hands
+        // `UvFor` the same one, rather than mixing the two (see Rim).
         int Add(Vector3 position, Vector2 uv, Vector3 normal)
         {
             var u = UAxisFor(normal);
@@ -598,6 +604,25 @@ public static class BlockDamage
             uvs.Add(uv);
             normals.Add(normal);
             tangents.Add(new Vector4(u.x, u.y, u.z, 1f));
+            return vertices.Count - 1;
+        }
+
+        // A rim vertex: measured in its own face's frame, but *lit* as the front
+        // face, which is the prefab's whole edge treatment (see Rim, and
+        // ArkanoidSetup.BuildWorldUvBoxMesh). The two cannot be the same vertex
+        // attribute, so the frame's u axis cannot be the tangent either — on a
+        // side wall it is +Z, exactly antiparallel to the borrowed -Z normal,
+        // and a tangent parallel to its own normal leaves a zero bitangent, a
+        // degenerate TBN and a normal map that perturbs nothing. The frame's
+        // *v* axis is what is handed over instead: perpendicular to the borrowed
+        // normal by construction, so the frame stays a frame.
+        int AddLitAsFace(Vector3 position, Vector2 uv, Vector3 frame)
+        {
+            var v = Vector3.Cross(frame, UAxisFor(frame));
+            vertices.Add(position);
+            uvs.Add(uv);
+            normals.Add(Vector3.back);
+            tangents.Add(new Vector4(v.x, v.y, v.z, 1f));
             return vertices.Count - 1;
         }
 
@@ -716,12 +741,39 @@ public static class BlockDamage
             // And the side, from the strip's far edge straight back. Flat, and
             // at the silhouette rather than at the inset face, so the block is
             // exactly as wide as it was.
+            //
+            // **It takes the front face's whole frame — normal, UV and tangent.**
+            // Its own normal is `outward`, dead perpendicular to a head-on key
+            // light, so a side wide enough for the perspective to show came back
+            // as a raw grey band down the end of every damaged block, beside a
+            // prefab whose end shades as its face. Nothing about that band was
+            // the geometry: the wall stands where the prefab's does. It is the
+            // shading, and the answer is the one `BuildWorldUvBoxMesh` settled
+            // on for the same reason — a surface angled away from the face *is*
+            // a band, whatever colour it is, so an edge surface is not lit as a
+            // surface of its own.
+            //
+            // **The UVs stay in the side's own frame**, exactly as the prefab's
+            // side face does, which is what keeps the grain on the end: what
+            // shows there is the same patch of tile the prefab shows. Two other
+            // recipes were tried on the bench and both came back as a band of
+            // their own. Borrowing the front normal while keeping the side's
+            // tangent is degenerate — the tangent is +Z against a -Z normal, so
+            // the bitangent is zero and the normal map perturbs nothing: the end
+            // went from unlit grey to lit-but-glassy, flat colour where the
+            // prefab's has relief. Taking the front face's UVs *as well* fixes
+            // the frame and loses the texture instead: `UvFor(_, back)` ignores
+            // z, so both rings land on one row of texels and the wall is that
+            // row smeared across the depth — at a wide angle a blank panel where
+            // the prefab has grain. What is handed over is the side's frame with
+            // the front face's normal and the frame's *v* axis as the tangent
+            // (see AddLitAsFace).
             var backFrom = new Vector3(edgeFrom.x, edgeFrom.y, halfLocal.z);
             var backTo = new Vector3(edgeTo.x, edgeTo.y, halfLocal.z);
-            int e = Add(edgeFrom, UvFor(edgeFrom, outward), outward);
-            int f = Add(edgeTo, UvFor(edgeTo, outward), outward);
-            int g = Add(backTo, UvFor(backTo, outward), outward);
-            int h = Add(backFrom, UvFor(backFrom, outward), outward);
+            int e = AddLitAsFace(edgeFrom, UvFor(edgeFrom, outward), outward);
+            int f = AddLitAsFace(edgeTo, UvFor(edgeTo, outward), outward);
+            int g = AddLitAsFace(backTo, UvFor(backTo, outward), outward);
+            int h = AddLitAsFace(backFrom, UvFor(backFrom, outward), outward);
             Quad(e, f, g, h);
         }
 
