@@ -411,10 +411,10 @@ public static class BlockDamage
         //
         // That cross product is the whole of why this exists. Taking the front
         // face's v as +Y — the obvious choice — mirrors the grain vertically
-        // against the prefab's -Y *and* flips the tangent frame's handedness,
-        // which inverts the normal map: every facet that stood proud reads as a
-        // pit. On screen that is not a subtle difference, it is a different
-        // texture, and it was reported as one.
+        // against the prefab's -Y, so the patch of tile the block shows is no
+        // longer the patch it showed a moment ago. On screen that is not a
+        // subtle difference, it is a different texture, and it was reported as
+        // one.
         Vector3 UAxisFor(Vector3 normal)
         {
             if (Mathf.Abs(normal.z) > 0.5f) return normal.z < 0f ? Vector3.right : Vector3.left;
@@ -560,69 +560,85 @@ public static class BlockDamage
                 nodeUvs[node] = UvFor(nodes[node], Vector3.back);
             }
 
-        // Whether each cell is still there, measured at its own centre.
-        var solid = new bool[columns * rows];
+        // Which cells are inside the outline at all, and which piece each one
+        // belongs to. Measured at the cell's own centre, and measured once:
+        // what changes between the passes below is only *which* piece is being
+        // drawn, never where the pieces are.
+        var inside = new bool[columns * rows];
+        var owners = new int[columns * rows];
         for (int j = 0; j < rows; j++)
             for (int i = 0; i < columns; i++)
             {
                 var middle = CellMiddle(i, j);
                 if (Outline(middle) >= 0f) continue;
-
-                // Which piece this cell belongs to decides whether it is drawn
-                // at all: the block draws every piece still standing, and a
-                // falling piece draws only itself.
-                int owner = shards != null ? shards.At(middle) : 0;
-                solid[j * columns + i] = shards == null
-                    || (piece < 0 ? gone == null || !gone[owner] : owner == piece);
+                inside[j * columns + i] = true;
+                owners[j * columns + i] = shards != null ? shards.At(middle) : 0;
             }
+
+        // **A block is drawn as its pieces from the first frame, one closed
+        // solid apiece, rather than as one skin over whatever is left.** That
+        // is the whole of this mesh's contract with the player: a hit removes
+        // a piece's triangles and touches nothing else, so every surviving
+        // pixel is the pixel it was before the ball arrived. The old
+        // construction raised walls only along the *outside* of what was
+        // standing, so the first shed rebuilt the surviving geometry — and a
+        // rebuilt edge is an edge that can look different, which is exactly
+        // what was reported on the Crystal blocks.
+        //
+        // The price is paid where it belongs: an intact block carries every
+        // interior wall it will ever need, so it is a few thousand vertices
+        // from the start rather than ninety-six. It also means the seams
+        // between pieces are visible from the first frame — a block visibly
+        // *is* made of pieces — which is the look this trades for.
+        var draw = new List<int>();
+        if (piece >= 0) draw.Add(piece);
+        else if (shards == null) draw.Add(-1);
+        else
+            for (int k = 0; k < shards.Sites.Length; k++)
+                if (gone == null || !gone[k]) draw.Add(k);
+
+        // The cells one pass draws. Rebuilt per piece, which is what makes each
+        // piece a closed solid: a neighbouring piece reads as empty, so the
+        // wall loops raise a side there exactly as they do at a hole.
+        var solid = new bool[columns * rows];
 
         var vertices = new List<Vector3>();
         var uvs = new List<Vector2>();
         var normals = new List<Vector3>();
-        var tangents = new List<Vector4>();
         var triangles = new List<int>();
 
-        // Normals *and* tangents are set rather than recalculated. The normals
-        // because the rim's shading depends on which surface each vertex belongs
-        // to, which an average over shared vertices cannot express; the tangents
-        // because the grain rides a normal map, and a map's perturbation is only
-        // as good as the frame it is applied in.
+        // Normals are set rather than recalculated, because the rim's shading
+        // depends on which surface each vertex belongs to and an average over
+        // shared vertices cannot express that.
         //
-        // The tangent is the same u axis the UV was measured along, with w of 1
-        // because `UvFor` builds v as `cross(normal, u)` — so the frame the
-        // shader reconstructs is exactly the frame the UVs were written in.
+        // **No tangents, and that is the whole point of this mesh matching the
+        // prefab's.** `BuildWorldUvBoxMesh` writes positions, normals and UVs
+        // and nothing else, so an intact block's tangent stream is absent: the
+        // TBN the shader builds is degenerate, the normal map's perturbation
+        // collapses onto the vertex normal, and the grain shades as the flat
+        // pattern its albedo draws. This mesh used to write a real tangent per
+        // vertex, so the first hit — the one that replaces the prefab's mesh
+        // with this one — switched the block's normal map on. Same texture,
+        // same UVs, same tiling: the relief appeared out of nowhere, the face
+        // went glassy and every end face with it, and it was reported as the
+        // block's texture changing when a piece broke off. A block that loses
+        // a corner should look like the same block with a corner missing, so
+        // the frame it is drawn in has to be the frame it was drawn in before.
         //
-        // One normal per vertex does both jobs, and it has to: it is the frame
-        // the UV and the tangent were written in *and* what the surface is lit
-        // as. A caller that wants a surface lit as a face it does not belong to
-        // — the rim's side wall does — passes that face's normal here and hands
-        // `UvFor` the same one, rather than mixing the two (see Rim).
+        // If the grain's relief is ever wanted in play, the fix belongs at the
+        // *other* end — tangents on the prefab's mesh, matching the frames
+        // below — never here alone, or the change comes back on the next hit.
+        //
+        // One normal per vertex does two jobs: it is the frame the UV was
+        // written in *and* what the surface is lit as. A caller that wants a
+        // surface lit as a face it does not belong to — the rim's side wall
+        // does — passes the front face's normal here and hands `UvFor` its own
+        // (see Rim).
         int Add(Vector3 position, Vector2 uv, Vector3 normal)
         {
-            var u = UAxisFor(normal);
             vertices.Add(position);
             uvs.Add(uv);
             normals.Add(normal);
-            tangents.Add(new Vector4(u.x, u.y, u.z, 1f));
-            return vertices.Count - 1;
-        }
-
-        // A rim vertex: measured in its own face's frame, but *lit* as the front
-        // face, which is the prefab's whole edge treatment (see Rim, and
-        // ArkanoidSetup.BuildWorldUvBoxMesh). The two cannot be the same vertex
-        // attribute, so the frame's u axis cannot be the tangent either — on a
-        // side wall it is +Z, exactly antiparallel to the borrowed -Z normal,
-        // and a tangent parallel to its own normal leaves a zero bitangent, a
-        // degenerate TBN and a normal map that perturbs nothing. The frame's
-        // *v* axis is what is handed over instead: perpendicular to the borrowed
-        // normal by construction, so the frame stays a frame.
-        int AddLitAsFace(Vector3 position, Vector2 uv, Vector3 frame)
-        {
-            var v = Vector3.Cross(frame, UAxisFor(frame));
-            vertices.Add(position);
-            uvs.Add(uv);
-            normals.Add(Vector3.back);
-            tangents.Add(new Vector4(v.x, v.y, v.z, 1f));
             return vertices.Count - 1;
         }
 
@@ -633,15 +649,6 @@ public static class BlockDamage
         }
 
         var frontIndex = new int[nodes.Length];
-        for (int n = 0; n < nodes.Length; n++) frontIndex[n] = -1;
-        for (int j = 0; j < rows; j++)
-            for (int i = 0; i < columns; i++)
-            {
-                if (!solid[j * columns + i]) continue;
-                int a = Corner(i, j), b = Corner(i + 1, j);
-                int c = Corner(i + 1, j + 1), d = Corner(i, j + 1);
-                Quad(a, d, c, b);
-            }
 
         int Corner(int i, int j)
         {
@@ -654,7 +661,6 @@ public static class BlockDamage
         // The back. Flat, and only where the front is: a bite goes right
         // through, so what shows in the notch is the room behind the block.
         var backIndex = new int[nodes.Length];
-        for (int n = 0; n < nodes.Length; n++) backIndex[n] = -1;
 
         int BackCorner(int i, int j)
         {
@@ -668,40 +674,90 @@ public static class BlockDamage
             return backIndex[node];
         }
 
-        for (int j = 0; j < rows; j++)
-            for (int i = 0; i < columns; i++)
-            {
-                if (!solid[j * columns + i]) continue;
-                int a = BackCorner(i, j), b = BackCorner(i + 1, j);
-                int c = BackCorner(i + 1, j + 1), d = BackCorner(i, j + 1);
-                Quad(a, b, c, d);
-            }
-
         // The walls: every cell edge with nothing beside it, whether that is
-        // the block's own outline or the inside of a notch. Drawn with their
-        // own vertices so the wall meets the face in a hard edge rather than
-        // smearing the face's shading round the corner.
+        // the block's own outline, the inside of a notch, or the border with
+        // the piece next door. Drawn with their own vertices so the wall meets
+        // the face in a hard edge rather than smearing the face's shading round
+        // the corner.
         bool Beside(int i, int j) =>
             i >= 0 && j >= 0 && i < columns && j < rows && solid[j * columns + i];
 
-        // A wall stands wherever a cell has nothing beside it — the block's own
-        // boundary, or the inside of a hole a piece left.
+        // Is the cell next door inside the block's outline at all — whoever it
+        // belongs to and whether or not that piece is still standing?
+        bool Within(int i, int j) =>
+            i >= 0 && j >= 0 && i < columns && j < rows && inside[j * columns + i];
+
+        // A wall stands where a cell meets the outside world, and **nowhere
+        // along a seam between two pieces**. A wall runs the full depth of the
+        // block, so on a see-through material a seam wall is not a hairline:
+        // seen through the piece in front of it, it projects as a pale wedge
+        // that widens with distance from the middle of the screen, which is why
+        // the blocks at the edges of the field looked worst and the ones in the
+        // middle looked clean. The block's own silhouette is the only place the
+        // eye has ever been shown a side, so it is the only place that keeps
+        // one.
+        //
+        // Leaving the seams open costs the hole a piece leaves its thickness —
+        // a notch shows the room behind rather than a cut face. That is what a
+        // bite already does (see Bite), and it is the price of the invariant:
+        // raising the wall only once the neighbour has gone would be geometry
+        // appearing on a hit, which is the whole thing this construction exists
+        // to prevent.
+        // A falling piece is the exception, and it has to be: once it is off the
+        // block it *is* its own outline, so it takes a wall all the way round
+        // and reads as the chunk of a solid it is (see BuildPiece).
         void Side(int i, int j, int di, int dj, int from, int to)
         {
-            if (Beside(i + di, j + dj)) return;
+            if (piece >= 0 ? Beside(i + di, j + dj) : Within(i + di, j + dj)) return;
             if (isRim[from] && isRim[to]) Rim(from, to);
             else Wall(from, to);
         }
 
-        for (int j = 0; j < rows; j++)
-            for (int i = 0; i < columns; i++)
-            {
-                if (!solid[j * columns + i]) continue;
-                Side(i, j, -1, 0, Index(i, j + 1), Index(i, j));
-                Side(i, j, 1, 0, Index(i + 1, j), Index(i + 1, j + 1));
-                Side(i, j, 0, -1, Index(i, j), Index(i + 1, j));
-                Side(i, j, 0, 1, Index(i + 1, j + 1), Index(i, j + 1));
-            }
+        // One pass per piece, each writing its own vertices: nothing is shared
+        // across a seam, so removing a piece can never disturb its neighbour.
+        foreach (int only in draw)
+        {
+            for (int cell = 0; cell < solid.Length; cell++)
+                solid[cell] = inside[cell] && (only < 0 || owners[cell] == only);
+            for (int n = 0; n < nodes.Length; n++) frontIndex[n] = backIndex[n] = -1;
+
+            for (int j = 0; j < rows; j++)
+                for (int i = 0; i < columns; i++)
+                {
+                    if (!solid[j * columns + i]) continue;
+                    int a = Corner(i, j), b = Corner(i + 1, j);
+                    int c = Corner(i + 1, j + 1), d = Corner(i, j + 1);
+                    Quad(a, d, c, b);
+                }
+
+            // The back, and **only on a piece that has come off**. A block is
+            // looked at from the front and nothing standing in this room ever
+            // sees behind one, so on an opaque material the back face is hidden
+            // by the front and on a see-through one it is the seam between two
+            // pieces' backs — offset from the seam in front of it by the depth
+            // of the block — showing through the glass as a second line. A
+            // falling piece is the one thing here that turns over, so it is the
+            // one thing that needs a back.
+            if (piece >= 0)
+                for (int j = 0; j < rows; j++)
+                    for (int i = 0; i < columns; i++)
+                    {
+                        if (!solid[j * columns + i]) continue;
+                        int a = BackCorner(i, j), b = BackCorner(i + 1, j);
+                        int c = BackCorner(i + 1, j + 1), d = BackCorner(i, j + 1);
+                        Quad(a, b, c, d);
+                    }
+
+            for (int j = 0; j < rows; j++)
+                for (int i = 0; i < columns; i++)
+                {
+                    if (!solid[j * columns + i]) continue;
+                    Side(i, j, -1, 0, Index(i, j + 1), Index(i, j));
+                    Side(i, j, 1, 0, Index(i + 1, j), Index(i + 1, j + 1));
+                    Side(i, j, 0, -1, Index(i, j), Index(i + 1, j));
+                    Side(i, j, 0, 1, Index(i + 1, j + 1), Index(i, j + 1));
+                }
+        }
 
         // The block's own edge: a 45-degree strip from the inset face out to the
         // silhouette, then the side wall from there to the back. The strip's
@@ -742,7 +798,7 @@ public static class BlockDamage
             // at the silhouette rather than at the inset face, so the block is
             // exactly as wide as it was.
             //
-            // **It takes the front face's whole frame — normal, UV and tangent.**
+            // **It is lit as the front face.**
             // Its own normal is `outward`, dead perpendicular to a head-on key
             // light, so a side wide enough for the perspective to show came back
             // as a raw grey band down the end of every damaged block, beside a
@@ -755,25 +811,17 @@ public static class BlockDamage
             //
             // **The UVs stay in the side's own frame**, exactly as the prefab's
             // side face does, which is what keeps the grain on the end: what
-            // shows there is the same patch of tile the prefab shows. Two other
-            // recipes were tried on the bench and both came back as a band of
-            // their own. Borrowing the front normal while keeping the side's
-            // tangent is degenerate — the tangent is +Z against a -Z normal, so
-            // the bitangent is zero and the normal map perturbs nothing: the end
-            // went from unlit grey to lit-but-glassy, flat colour where the
-            // prefab's has relief. Taking the front face's UVs *as well* fixes
-            // the frame and loses the texture instead: `UvFor(_, back)` ignores
-            // z, so both rings land on one row of texels and the wall is that
-            // row smeared across the depth — at a wide angle a blank panel where
-            // the prefab has grain. What is handed over is the side's frame with
-            // the front face's normal and the frame's *v* axis as the tangent
-            // (see AddLitAsFace).
+            // shows there is the same patch of tile the prefab shows. Taking
+            // the front face's UVs as well was tried and loses the texture:
+            // `UvFor(_, back)` ignores z, so both rings land on one row of
+            // texels and the wall is that row smeared across the depth — at a
+            // wide angle a blank panel where the prefab has grain.
             var backFrom = new Vector3(edgeFrom.x, edgeFrom.y, halfLocal.z);
             var backTo = new Vector3(edgeTo.x, edgeTo.y, halfLocal.z);
-            int e = AddLitAsFace(edgeFrom, UvFor(edgeFrom, outward), outward);
-            int f = AddLitAsFace(edgeTo, UvFor(edgeTo, outward), outward);
-            int g = AddLitAsFace(backTo, UvFor(backTo, outward), outward);
-            int h = AddLitAsFace(backFrom, UvFor(backFrom, outward), outward);
+            int e = Add(edgeFrom, UvFor(edgeFrom, outward), Vector3.back);
+            int f = Add(edgeTo, UvFor(edgeTo, outward), Vector3.back);
+            int g = Add(backTo, UvFor(backTo, outward), Vector3.back);
+            int h = Add(backFrom, UvFor(backFrom, outward), Vector3.back);
             Quad(e, f, g, h);
         }
 
@@ -820,7 +868,6 @@ public static class BlockDamage
         mesh.SetVertices(vertices);
         mesh.SetUVs(0, uvs);
         mesh.SetNormals(normals);
-        mesh.SetTangents(tangents);
         mesh.SetTriangles(triangles, 0);
 
         mesh.RecalculateBounds();

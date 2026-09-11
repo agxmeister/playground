@@ -481,19 +481,9 @@ public class Brick : MonoBehaviour
     // than left to the garbage collector, which does not collect meshes.
     void Carve(Vector2? at)
     {
-        if (!ComesApart) return;
-
-        var filter = GetComponent<MeshFilter>();
-        if (filter == null || filter.sharedMesh == null) return;
-
-        if (!bodyMeasured)
-        {
-            bodyLocalSize = filter.sharedMesh.bounds.size;
-            bodyMeasured = true;
-        }
+        if (!EnsureBody()) return;
 
         var worldSize = Vector3.Scale(bodyLocalSize, transform.lossyScale);
-        var halfLocal = new Vector2(bodyLocalSize.x * 0.5f, bodyLocalSize.y * 0.5f);
         var localHit = at.HasValue
             ? (Vector2)transform.InverseTransformPoint(at.Value.x, at.Value.y, transform.position.z)
             : Vector2.zero;
@@ -506,20 +496,6 @@ public class Brick : MonoBehaviour
             float radius = ChipSize * BiteOfChip * (bodyLocalSize.x / Mathf.Max(worldSize.x, 0.0001f));
             bites.Add(new BlockDamage.Bite { At = localHit, Radius = radius });
         }
-
-        // How many pieces this block comes apart in: about one per hit it can
-        // take, so a slab sheds a piece at a time and the hit that kills it
-        // takes whatever is left standing. Clamped at both ends — two pieces is
-        // a block cut in half rather than broken, and past eight the pieces are
-        // smaller than the ball that is knocking them off.
-        // Seeded off where the block stands rather than off the object, so a
-        // bench rebuild at the same seed lays down the same wall breaking the
-        // same way — and so two blocks side by side never break alike.
-        shards ??= BlockDamage.Shards.Build(
-            Mathf.RoundToInt(transform.position.x * 613f + transform.position.y * 271f),
-            halfLocal, Mathf.Clamp(Hardness, 3, 8), BlockMaterials.EdgeOf(Material));
-        shardGone ??= new bool[shards.Sites.Length];
-        shardLoose ??= new bool[shards.Sites.Length];
 
         // The piece the ball just knocked off — the one nearest where it
         // landed that is still there. It is thrown *before* the block is
@@ -579,14 +555,69 @@ public class Brick : MonoBehaviour
         // pieces it outlined are the holes now.
         HideCrackLines();
 
-        var carved = BlockDamage.BuildBlock(
-            bodyLocalSize, worldSize, bites, outlineCornerRadius, shards, shardGone);
+        RebuildBody();
+    }
+
+    // The body, laid out and put on the renderer. Called once at spawn and
+    // again after every hit that takes a piece — and it is the *same* call both
+    // times, which is the point: an intact block and a broken one are the same
+    // construction with a different set of pieces standing, so nothing about
+    // the survivors can change when one of them goes (see BlockDamage.Build).
+    void Start() => EnsureBody();
+
+    // Measures the prefab's box, lays the pieces out over it, and builds the
+    // body if it has not been built. Answers whether this block has one at all:
+    // a block that does not come apart keeps the prefab's own mesh and is never
+    // rebuilt, so nothing below applies to it.
+    bool EnsureBody()
+    {
+        if (!ComesApart) return false;
+
+        var filter = GetComponent<MeshFilter>();
+        if (filter == null || filter.sharedMesh == null) return false;
+
+        // Measured off the prefab's box, and only ever once — by the time this
+        // runs again the renderer is carrying a mesh of our own, whose bounds
+        // are whatever is left standing rather than the block.
+        if (!bodyMeasured)
+        {
+            bodyLocalSize = filter.sharedMesh.bounds.size;
+            bodyMeasured = true;
+        }
+
+        // How many pieces this block comes apart in: about one per hit it can
+        // take, so a slab sheds a piece at a time and the hit that kills it
+        // takes whatever is left standing. Clamped at both ends — two pieces is
+        // a block cut in half rather than broken, and past eight the pieces are
+        // smaller than the ball that is knocking them off.
+        // Seeded off where the block stands rather than off the object, so a
+        // bench rebuild at the same seed lays down the same wall breaking the
+        // same way — and so two blocks side by side never break alike. That the
+        // seed is read from the transform is why this waits for `Start`: at
+        // `Awake` a freshly instantiated block has not been put in its place.
+        var halfLocal = new Vector2(bodyLocalSize.x * 0.5f, bodyLocalSize.y * 0.5f);
+        shards ??= BlockDamage.Shards.Build(
+            Mathf.RoundToInt(transform.position.x * 613f + transform.position.y * 271f),
+            halfLocal, Mathf.Clamp(Hardness, 3, 8), BlockMaterials.EdgeOf(Material));
+        shardGone ??= new bool[shards.Sites.Length];
+        shardLoose ??= new bool[shards.Sites.Length];
+
+        if (damagedMesh == null) RebuildBody();
+        return true;
+    }
+
+    void RebuildBody()
+    {
+        var filter = GetComponent<MeshFilter>();
+        if (filter == null) return;
+
+        var built = BlockDamage.BuildBlock(
+            bodyLocalSize, Vector3.Scale(bodyLocalSize, transform.lossyScale),
+            bites, outlineCornerRadius, shards, shardGone);
 
         ReleaseDamage();
-        damagedMesh = carved;
+        damagedMesh = built;
         filter.sharedMesh = damagedMesh;
-
-
     }
 
     // The crack, redrawn for whatever is loose now. The mesh belongs to this
