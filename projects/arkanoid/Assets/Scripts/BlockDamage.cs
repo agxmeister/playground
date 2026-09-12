@@ -452,7 +452,12 @@ public static class BlockDamage
         // edges — harmless for as long as the two box blocks' radius was zero,
         // and three pixels of missing silhouette the moment it was not. It
         // presented as the block changing shape on its first hit.
-        float Outline(Vector2 point)
+        //
+        // **The frame and the bites are asked about separately**, because the
+        // two boundaries are not the same kind of edge and must not be drawn
+        // the same way: the frame is the block's own rim and wears the bevel,
+        // a bite is a break and wears the hard wall (see Side).
+        float Frame(Vector2 point)
         {
             var world = new Vector2(point.x / perWorld.x, point.y / perWorld.y);
             var halfWorld = new Vector2(halfLocal.x / perWorld.x, halfLocal.y / perWorld.y);
@@ -461,7 +466,13 @@ public static class BlockDamage
                 Mathf.Abs(world.y) - (halfWorld.y - cornerRadius));
             float inside = Mathf.Min(Mathf.Max(corner.x, corner.y), 0f);
             float outside = new Vector2(Mathf.Max(corner.x, 0f), Mathf.Max(corner.y, 0f)).magnitude;
-            float distance = inside + outside - cornerRadius;
+            return inside + outside - cornerRadius;
+        }
+
+        float Outline(Vector2 point)
+        {
+            var world = new Vector2(point.x / perWorld.x, point.y / perWorld.y);
+            float distance = Frame(point);
 
             // A bite is authored in local units (Brick.Carve scales it by the
             // block's own x), so it makes the same trip.
@@ -480,6 +491,38 @@ public static class BlockDamage
         Vector2 CellMiddle(int i, int j) => new Vector2(
             -halfLocal.x + (i + 0.5f) * (halfLocal.x * 2f / columns),
             -halfLocal.y + (j + 0.5f) * (halfLocal.y * 2f / rows));
+
+        // Which cells the block's own outline covers, before a bite is taken out
+        // of it. Where the *rim* runs is a different question from which cells
+        // are still standing, and keeping the two apart is what lets a corner
+        // arc be rimmed and a bite be broken.
+        var inFrame = new bool[columns * rows];
+        for (int j = 0; j < rows; j++)
+            for (int i = 0; i < columns; i++)
+                inFrame[j * columns + i] = Frame(CellMiddle(i, j)) < 0f;
+
+        bool Framed(int i, int j) =>
+            i >= 0 && j >= 0 && i < columns && j < rows && inFrame[j * columns + i];
+
+        // Is the block's own outline what passes through this node? The grid's
+        // outer ring is most of the rim but not all of it: a corner radius cuts
+        // the corner *cell* out of the mask, and the staircase that leaves turns
+        // at a node one in from the ring. Until that node counted as rim too,
+        // the two edges meeting there were built as a *break* rather than as a
+        // rim — a wall running the full depth of the block, lit as a surface of
+        // its own, which a head-on key light gives nothing at all. It read as a
+        // black wedge at every corner the camera could see the end of, on
+        // Ceramics and Crystal alone, since they are the two materials that wear
+        // this mesh from the first frame. The wider the block stood from the
+        // middle of the screen the wider the wedge, because what was being shown
+        // was the block's own depth.
+        bool OnRim(int i, int j)
+        {
+            if (i == 0 || j == 0 || i == columns || j == rows) return true;
+            int framed = (Framed(i - 1, j - 1) ? 1 : 0) + (Framed(i, j - 1) ? 1 : 0)
+                + (Framed(i - 1, j) ? 1 : 0) + (Framed(i, j) ? 1 : 0);
+            return framed > 0 && framed < 4;
+        }
 
         var nodes = new Vector3[(columns + 1) * (rows + 1)];
         var nodeUvs = new Vector2[nodes.Length];
@@ -517,7 +560,7 @@ public static class BlockDamage
                 var point = new Vector2(
                     -halfLocal.x + i * (halfLocal.x * 2f / columns),
                     -halfLocal.y + j * (halfLocal.y * 2f / rows));
-                if (i == 0 || j == 0 || i == columns || j == rows) point = OnOutline(point);
+                if (OnRim(i, j)) point = OnOutline(point);
 
                 // The face is flat. What says a block is damaged is the pieces
                 // missing from it, not anything cut into what is left.
@@ -536,7 +579,7 @@ public static class BlockDamage
         for (int j = 0; j <= rows; j++)
             for (int i = 0; i <= columns; i++)
             {
-                if (i != 0 && j != 0 && i != columns && j != rows) continue;
+                if (!OnRim(i, j)) continue;
                 int node = Index(i, j);
                 var point = nodes[node];
                 var world = new Vector2(point.x / perWorld.x, point.y / perWorld.y);
@@ -709,7 +752,11 @@ public static class BlockDamage
         void Side(int i, int j, int di, int dj, int from, int to)
         {
             if (piece >= 0 ? Beside(i + di, j + dj) : Within(i + di, j + dj)) return;
-            if (isRim[from] && isRim[to]) Rim(from, to);
+            // The rim is the block's own outline and nothing else. A bite has
+            // eaten into the frame rather than ended it, so the edge it leaves
+            // is a break and takes the hard wall even where both its nodes
+            // happen to sit on the rim.
+            if (!Framed(i + di, j + dj) && isRim[from] && isRim[to]) Rim(from, to);
             else Wall(from, to);
         }
 
