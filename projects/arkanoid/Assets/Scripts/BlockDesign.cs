@@ -48,24 +48,38 @@ public enum BlockDesign
     // the veining as scratches; a cloud is what still reads, because it is the
     // one character that is in the body rather than on the face.
     Slate,
-    // Crystal's three, and the one band whose points name *stones* rather than
-    // shades: the band runs frost to amethyst, so where a block lands on it
+    // Crystal's three, and the one band whose points name a *substance* rather
+    // than a shade: it runs frost to amethyst, so where a block lands on it
     // decides which mineral it is as much as how bright it came out. Light to
     // dark like the other two.
     //
-    // The icy near-white, cleanly cleaved: coarse flat facets and nothing else
-    // on the face, which is the pale low-poly tile off the reference sheet.
-    Quartz,
-    // The middle of the band, shattered. Pale violet-grey — the colour fluorite
-    // actually comes out — and the one of the three whose character is the
-    // *break* rather than the cut: slivers crossing every way.
-    Fluorite,
-    // The dark violet end, and a druse rather than a face. Down here a single
-    // cleaved plane would be a slab of dark glass with one highlight on it,
-    // where a bed of points keeps catching the light all over — which is the
-    // same argument Slate makes one material up, that the character has to be
-    // the one that survives having little brightness left to draw with.
+    // **These three were picked off a rolled grid, not walked to on the dials**,
+    // and the numbers are the rolls themselves — a probe in `BlockVariety.Roll`
+    // printed what seed 1 dealt each of the twelve blocks, so these are the
+    // looks that were actually on screen and not a reading of a picture of
+    // them. It shows: none of the three sits at an end of the band, where
+    // Polymer's outer two nearly do. That is the point rather than a rough
+    // edge — the ends are where a die hardly ever lands, so a table written
+    // from the ends is a table of looks nobody has seen in a wall. Which grain
+    // goes with which brightness came out of the same session, and came out the
+    // *other* way round from the reasoned version this replaces (facets pale,
+    // druse dark).
+    //
+    // The pale end, shattered: slivers crossing every way on a body light
+    // enough that the breaks are the only dark thing on it. Ice rather than a
+    // stone, which is what the pale end of this band has always been called.
+    Frost,
+    // The middle, and a druse rather than a face — a bed of points on a lilac
+    // body. The pairing goes this way round because points are what the middle
+    // of the band can afford to spend: there is still colour here to see them
+    // against, and a facet's single plane would waste it on one highlight.
     Amethyst,
+    // The dark end, cleanly cleaved: coarse flat facets and nothing else on the
+    // face. Down here the tint is nearly gone and the *creases* are what is
+    // left to read the block by — which a facet field has more of than either
+    // of the other two, and which stay legible at any brightness because they
+    // are discontinuities rather than shading.
+    Smoke,
 }
 
 public static class BlockDesigns
@@ -123,9 +137,9 @@ public static class BlockDesigns
         new Definition(BlockMaterial.Ceramics, Vein, 0.90f),     // Porcelain
         new Definition(BlockMaterial.Ceramics, Crackle, 0.35f),  // Craze
         new Definition(BlockMaterial.Ceramics, Cloudy, 0.10f),   // Slate
-        new Definition(BlockMaterial.Crystal, Facet, 0.92f),     // Quartz
-        new Definition(BlockMaterial.Crystal, Shard, 0.55f),     // Fluorite
-        new Definition(BlockMaterial.Crystal, Druse, 0.12f),     // Amethyst
+        new Definition(BlockMaterial.Crystal, Shard, 0.66f),     // Frost
+        new Definition(BlockMaterial.Crystal, Druse, 0.48f),     // Amethyst
+        new Definition(BlockMaterial.Crystal, Facet, 0.14f),     // Smoke
     };
 
     public static int Count => All.Length;
