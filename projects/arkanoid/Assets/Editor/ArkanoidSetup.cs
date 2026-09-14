@@ -246,20 +246,42 @@ public static class ArkanoidSetup
     // and sphere map 0..1 across a face whatever its size, so their span is the
     // reciprocal of that size, while the rounded prism's mesh puts local XY
     // straight into the UV and so spans exactly one.
-    static readonly (string Prefab, Vector2 UvPerUnit)[] BrickGrainUvSpans =
+    //
+    // `NormalScale` rides along because it answers the same question from the
+    // other side: the span says how big the grain comes out on this shape, and
+    // this says how hard it reads once it is there. One for every flat-faced
+    // block, whose face the key light strikes square on, and more for the round
+    // one, which is curved and lit worse everywhere but its centre.
+    static readonly (string Prefab, Vector2 UvPerUnit, float NormalScale)[] BrickGrainUvSpans =
     {
         // The two box blocks wear world-UV meshes of their own rather than the
         // stock cube (stages 96 and 97), so like the rounded prism they measure
         // one UV unit to one world unit on every face.
-        (BrickPrefabPath, Vector2.one),
-        (HalfBrickPrefabPath, Vector2.one),
-        (RoundedBrickPrefabPath, Vector2.one),
-        // A stock sphere's u runs once around the equator and its v once from
-        // pole to pole, so the two spans differ by the half-turn: pi*d across
-        // u and pi*d/2 across v.
-        (RoundBrickPrefabPath, new Vector2(
-            1f / (Mathf.PI * RoundBrickDiameter), 2f / (Mathf.PI * RoundBrickDiameter))),
+        (BrickPrefabPath, Vector2.one, 1f),
+        (HalfBrickPrefabPath, Vector2.one, 1f),
+        (RoundedBrickPrefabPath, Vector2.one, 1f),
+        // And the round one does too, now that its sphere is built here with
+        // planar UVs rather than taken from Unity with lat/long ones. What
+        // stood here was the stock sphere's pair — 1/(pi*d) across u and
+        // 2/(pi*d) across v, the equator and the half-turn — and it was
+        // arithmetically right: the grain came out the same world size on the
+        // ball as on a slab, and still arrived as concentric arcs, because a
+        // wrapped map is not a projected one.
+        //
+        // Its normal scale is the one number here that is a *taste* rather than
+        // a measurement — `RoundBrickGrainRelief`, set by eye on the bench
+        // against the flat blocks standing beside it.
+        (RoundBrickPrefabPath, Vector2.one, RoundBrickGrainRelief),
     };
+
+    // How much deeper the round block reads its grain than a flat one. A ball
+    // spends most of its face turned away from the key light, so the same
+    // relief arrives with less light to cast a shadow in; this is the
+    // compensation, and it is deliberately a separate dial from the normal lift
+    // that answers the *brightness* — the lift flattens the ball to light and
+    // this does not, so the surface can be deepened without the shape being
+    // ironed out.
+    const float RoundBrickGrainRelief = 1.6f;
 
     // Which relief a grain is, across all three reference sheets. Polymer's
     // three are the characters that dominate a sheet of moulded plastic: the
@@ -369,6 +391,52 @@ public static class ArkanoidSetup
     // plainly there while the face stays a face.
     const float RoundedBrickCornerRadius = 0.2f;
     const float RoundBrickDiameter = 0.5f;
+    // The round block's own mesh — still a sphere, and that is the point: it is
+    // the stock sphere's *UVs* that could not carry a grain, not its shape.
+    //
+    // The stock sphere is mapped lat/long: u once around the equator, v once
+    // pole to pole. Authoring `1/(pi*d)`, `2/(pi*d)` on the prefab made the
+    // grain come out the right world size on it — measured, and correct — and
+    // it still did not read, because a lat/long map does three things a flat
+    // face's does not. It converges at the poles, so the grain combs into
+    // concentric arcs toward the silhouette (plain to see on a Polymer ball).
+    // It compresses toward the rim, where the surface turns away from the
+    // camera. And it puts a seam down the back.
+    //
+    // So this sphere is built with **planar UVs**: `uv = (x, y)` in world
+    // units, the grain projected straight at the ball the way a slide projector
+    // would, which is the same map the flat blocks wear. Face-on — which is how
+    // every block on this board is seen — the grain is then pixel-for-pixel the
+    // size and shape it is on a slab, with no seam and no poles. It stretches
+    // where the surface turns edge-on at the silhouette, which is geometry and
+    // not a choice: any map of a plane onto a hemisphere has to give somewhere,
+    // and the rim is where the least of the block is.
+    const string RoundBrickMeshPath = MeshesFolder + "/BrickRound.asset";
+    // The sphere's tessellation: segments around, rings pole to pole. Fine
+    // enough that the silhouette is a circle rather than a polygon at the size
+    // a block is drawn, which is the only thing the count has to buy — the
+    // shading is per-pixel off the radial normals.
+    const int RoundBrickSegments = 32;
+    const int RoundBrickRings = 16;
+    // How far the ball's shading normals are lifted toward the camera, as a
+    // multiple of the radial normal before renormalising: 0 is a true sphere
+    // and larger numbers flatten it toward a face.
+    //
+    // A true sphere is lit as a sphere, and that is the whole of why a grain
+    // that is *correct* on it still could not be seen: every normal but one
+    // patch's points away from the key light, so the relief has no light to
+    // modulate. Measured, the crystal ball came back at half a flat block's
+    // brightness and half its contrast whatever was done to its UVs. This is
+    // the dial that answers it, and it is a lie told on purpose — the geometry,
+    // the silhouette and the collider are still a ball's, and only the shading
+    // pretends the surface is flatter than it is, which is the same bargain a
+    // normal map makes everywhere else in this project.
+    const float RoundBrickNormalLift = 3f;
+    // How much of the round block's face the square crack sprite covers —
+    // roughly an inscribed square, so its pixels stay over the circle instead of
+    // floating past it. Was a bare 0.7 in the prefab builder; named because the
+    // repair stage has to agree with the builder about it.
+    const float RoundBrickCrackFace = 0.7f;
     // How far a box block's edges are cut back, in world units. Cosmetic only:
     // the BoxCollider2D is untouched, so the ball still reflects off the square
     // outline the block used to draw — the bevel is a face the light catches,
@@ -1288,16 +1356,33 @@ public static class ArkanoidSetup
         // matches its visual outline exactly, so the ball reflects off the
         // shape's true contact normal (flat face, corner curve, or circle).
 
-        // Stage 36: rounded-corner brick mesh, the same rounded-rectangle
-        // prism as the paddle, authored at final size.
-        if (!File.Exists(ToAbsolute(RoundedBrickMeshPath)))
+        // Stage 36: the two brick-variant meshes that are authored at final
+        // size — the rounded-corner prism, which is the paddle's shape, and the
+        // round block's sphere, which is the stock sphere's shape with this
+        // project's own UVs on it (see RoundBrickMeshPath).
+        //
+        // The two are guarded apart rather than together. They are written to
+        // different paths and only one of them has a staleness test, and a
+        // rewrite over a path something already points at destroys the object
+        // that reference is holding — so rebuilding the sphere must not take
+        // the rounded prism's mesh down with it.
+        bool roundedMeshStale = !File.Exists(ToAbsolute(RoundedBrickMeshPath));
+        bool sphereMeshStale = !File.Exists(ToAbsolute(RoundBrickMeshPath)) || RoundBrickMeshIsStale();
+        if (roundedMeshStale || sphereMeshStale)
         {
             Directory.CreateDirectory(ToAbsolute(MeshesFolder));
-            AssetDatabase.CreateAsset(
-                BuildRoundedPrismMesh("BrickRounded", BrickWidth, BrickHeight, BrickDepth,
-                    RoundedBrickCornerRadius, PaddleCornerSegments),
-                RoundedBrickMeshPath);
-            Debug.Log("[ArkanoidSetup] Stage 36: created the rounded brick mesh.");
+            if (roundedMeshStale)
+                AssetDatabase.CreateAsset(
+                    BuildRoundedPrismMesh("BrickRounded", BrickWidth, BrickHeight, BrickDepth,
+                        RoundedBrickCornerRadius, PaddleCornerSegments),
+                    RoundedBrickMeshPath);
+            if (sphereMeshStale)
+                AssetDatabase.CreateAsset(
+                    BuildPlanarUvSphereMesh("BrickRound", RoundBrickDiameter,
+                        RoundBrickSegments, RoundBrickRings),
+                    RoundBrickMeshPath);
+            AssetDatabase.SaveAssets();
+            Debug.Log("[ArkanoidSetup] Stage 36: created the brick variant meshes.");
             return;
         }
 
@@ -1307,15 +1392,16 @@ public static class ArkanoidSetup
         {
             var brickMaterial = AssetDatabase.LoadAssetAtPath<Material>(BrickMaterialPath);
             var roundedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(RoundedBrickMeshPath);
+            var sphereMesh = AssetDatabase.LoadAssetAtPath<Mesh>(RoundBrickMeshPath);
             var cracks = LoadCrackSprites();
-            if (brickMaterial == null || roundedMesh == null || cracks == null)
+            if (brickMaterial == null || roundedMesh == null || sphereMesh == null || cracks == null)
             {
                 Debug.Log("[ArkanoidSetup] Brick variant dependencies not loadable yet, waiting for next reload.");
                 return;
             }
             CreateHalfBrickPrefab(brickMaterial, cracks);
             CreateRoundedBrickPrefab(brickMaterial, roundedMesh, cracks);
-            CreateRoundBrickPrefab(brickMaterial, cracks);
+            CreateRoundBrickPrefab(brickMaterial, sphereMesh, cracks);
             Debug.Log("[ArkanoidSetup] Stage 37: created the brick variant prefabs.");
             return;
         }
@@ -2406,17 +2492,18 @@ public static class ArkanoidSetup
         var strayUvSpan = FirstStaleGrainUvSpan();
         if (strayUvSpan != null)
         {
-            foreach (var (path, uvPerUnit) in BrickGrainUvSpans)
+            foreach (var (path, uvPerUnit, normalScale) in BrickGrainUvSpans)
             {
-                if (!GrainUvSpanDiffers(path, uvPerUnit)) continue;
+                if (!GrainUvSpanDiffers(path, uvPerUnit, normalScale)) continue;
                 var root = PrefabUtility.LoadPrefabContents(path);
                 var brickSo = new SerializedObject(root.GetComponent<Brick>());
                 brickSo.FindProperty("grainUvPerUnit").vector2Value = uvPerUnit;
+                brickSo.FindProperty("grainNormalScale").floatValue = normalScale;
                 brickSo.ApplyModifiedPropertiesWithoutUndo();
                 PrefabUtility.SaveAsPrefabAsset(root, path);
                 PrefabUtility.UnloadPrefabContents(root);
             }
-            Debug.Log("[ArkanoidSetup] Stage 94: set the block prefabs' grain UV spans.");
+            Debug.Log("[ArkanoidSetup] Stage 94: set the block prefabs' grain UV spans and relief.");
             return;
         }
 
@@ -2886,9 +2973,11 @@ public static class ArkanoidSetup
         // the one thing the damage carver cannot read off a mesh (see
         // BlockDamage.Build). Two facts per prefab: the outline's corner radius
         // in world units, and whether the shape can be carved at all — the
-        // round block cannot, since its face is a sphere rather than a slab and
-        // its UVs are the stock sphere's rather than this project's world-unit
-        // ones, and both are assumptions the carver makes rather than checks.
+        // round block does not, since its face is a sphere rather than a slab
+        // and the carver assumes a flat one rather than checking. Half of that
+        // objection has since lapsed — stage 111 gave the ball world-unit UVs,
+        // so the other assumption holds now — but the face is still curved, so
+        // this stays off.
         var uncarved = FirstBlockPrefabMissingOutline();
         if (uncarved != null)
         {
@@ -2896,6 +2985,157 @@ public static class ArkanoidSetup
             Debug.Log($"[ArkanoidSetup] Stage 108: set the block outline on {uncarved}.");
             return;
         }
+
+        // Stage 111: move the round block off the stock sphere and onto this
+        // project's own — the repair half of stage 36's mesh, and the standing
+        // repair for what an asset rewrite does to a prefab's reference.
+        // Everything it sets is a consequence of the geometry being authored at
+        // final size rather than scaled to it: the transform goes to one, and
+        // the collider radius and the crack overlay, which used to be measured
+        // inside a 0.5 scale, are restated in world units. The numbers all land
+        // exactly where they landed before, which is the point — this changes
+        // the UVs and nothing a player could feel.
+        //
+        // The forced reimport at the end is not optional and is the same trap
+        // stage 97 documents at length: SaveAsPrefabAsset writes the file, and
+        // the Editor goes on serving the imported copy it already had.
+        if (RoundBrickWearsAStrayMesh())
+        {
+            var sphere = AssetDatabase.LoadAssetAtPath<Mesh>(RoundBrickMeshPath);
+            if (sphere != null)
+            {
+                var round = PrefabUtility.LoadPrefabContents(RoundBrickPrefabPath);
+                ShapeRoundBrick(round, sphere);
+                PrefabUtility.SaveAsPrefabAsset(round, RoundBrickPrefabPath);
+                PrefabUtility.UnloadPrefabContents(round);
+                AssetDatabase.ImportAsset(RoundBrickPrefabPath, ImportAssetOptions.ForceUpdate);
+                Debug.Log("[ArkanoidSetup] Stage 111: put the planar-UV sphere on the round block.");
+                return;
+            }
+        }
+    }
+
+    // Whether the round block is wearing anything but its own sphere — the
+    // stock one it was built with, a mesh destroyed under it by a rewrite
+    // (which reads as null here), or the right mesh at the wrong size.
+    //
+    // Every test is against the asset *path* rather than the object, because
+    // the object a prefab resolves to is not guaranteed to be the instance
+    // LoadAssetAtPath hands back, and a guard that compares identity re-runs
+    // its repair on every reload for something already pointing exactly where
+    // it should.
+    static bool RoundBrickWearsAStrayMesh()
+    {
+        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(RoundBrickPrefabPath);
+        var filter = prefab != null ? prefab.GetComponent<MeshFilter>() : null;
+        if (filter == null) return false;
+        if (filter.sharedMesh == null) return true;
+        if (AssetDatabase.GetAssetPath(filter.sharedMesh) != RoundBrickMeshPath) return true;
+        // The three things the scale change moves. Checked as well as the mesh
+        // because a prefab left half-repaired — by an older cut of this stage,
+        // or by a hand — would otherwise read as done while drawing a ball at
+        // half size inside a collider twice its silhouette.
+        if ((prefab.transform.localScale - Vector3.one).sqrMagnitude > 0.000001f) return true;
+        var collider = prefab.GetComponent<CircleCollider2D>();
+        if (collider != null
+            && Mathf.Abs(collider.radius - RoundBrickDiameter / 2f) > 0.0005f) return true;
+        var cracks = prefab.transform.Find("Cracks");
+        if (cracks == null) return false;
+        return Mathf.Abs(cracks.localScale.x - RoundBrickDiameter * RoundBrickCrackFace) > 0.0005f
+            || Mathf.Abs(cracks.localPosition.z - RoundBrickCrackDepth) > 0.0005f;
+    }
+
+    // Where the crack overlay hangs in front of the ball: just clear of the
+    // nearest point of the sphere, which is its own radius in front of centre.
+    static float RoundBrickCrackDepth => -RoundBrickDiameter / 2f - 0.01f;
+
+    // Whether the sphere on disk is the one the current constants describe. Its
+    // bounds are the measurement: the builder is the sole author of them, and a
+    // ball's box is its diameter on all three axes — which is also what tells
+    // it from the disc this briefly was, whose box was the block plane's depth.
+    static bool RoundBrickMeshIsStale()
+    {
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(RoundBrickMeshPath);
+        if (mesh == null) return true;
+        var size = mesh.bounds.size;
+        return Mathf.Abs(size.x - RoundBrickDiameter) > 0.002f
+            || Mathf.Abs(size.y - RoundBrickDiameter) > 0.002f
+            || Mathf.Abs(size.z - RoundBrickDiameter) > 0.002f
+            || RoundBrickWindingIsInverted()
+            || RoundBrickNormalsAreStale();
+    }
+
+    // Whether the sphere's normals carry the current lift. Bounds cannot see a
+    // normal any more than they can see a winding, and retuning the lift is
+    // exactly the kind of change that moves no vertex at all — so without this
+    // the dial would be dead the moment it was first turned.
+    //
+    // Measured at the widest vertex, where the lift does the most and where a
+    // wrong value cannot hide: at the centre of the ball every value of the
+    // dial agrees, because the normal there already faces the camera.
+    static bool RoundBrickNormalsAreStale()
+    {
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(RoundBrickMeshPath);
+        if (mesh == null) return true;
+        var vertices = mesh.vertices;
+        var normals = mesh.normals;
+        if (normals.Length != vertices.Length || normals.Length == 0) return true;
+
+        int widest = 0;
+        for (int i = 1; i < vertices.Length; i++)
+            if (vertices[i].x > vertices[widest].x) widest = i;
+        return Vector3.Angle(normals[widest], LiftedNormal(vertices[widest].normalized)) > 0.5f;
+    }
+
+    // Whether the sphere is inside out — the same test stage 96 makes on the
+    // box meshes, and for the same reason: bounds cannot see a winding, so
+    // without this the mesh that shipped inside out would look current forever.
+    //
+    // **Summed over every triangle rather than read off the first one**, which
+    // is the box's version and is wrong here. A lat/long sphere's first row of
+    // triangles is the one at the pole, where all of a ring's vertices sit on
+    // top of each other: the cross product of a degenerate triangle is the zero
+    // vector, the dot product is exactly 0, `0 < 0` is false, and the guard
+    // answers "not inverted" about a mesh that is. It cost a full rebuild to
+    // find, and it is the failure that looks like a passing check — so the
+    // measurement is over the whole surface, where the poles contribute nothing
+    // and cannot mislead.
+    static bool RoundBrickWindingIsInverted()
+    {
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(RoundBrickMeshPath);
+        if (mesh == null) return false;
+
+        var vertices = mesh.vertices;
+        var triangles = mesh.triangles;
+        if (triangles.Length < 3) return false;
+
+        // The sphere is centred on the origin, so a face's own centre is the
+        // direction "outward" there, and a face wound the right way round has
+        // its normal pointing the same way.
+        float outward = 0f;
+        for (int i = 0; i + 2 < triangles.Length; i += 3)
+        {
+            var a = vertices[triangles[i]];
+            var b = vertices[triangles[i + 1]];
+            var c = vertices[triangles[i + 2]];
+            outward += Vector3.Dot(Vector3.Cross(b - a, c - a), a + b + c);
+        }
+        return outward < 0f;
+    }
+
+    // The round block's shape, on a prefab already built. The same facts stage
+    // 37's builder writes into a fresh one, in one place so the two cannot
+    // drift.
+    static void ShapeRoundBrick(GameObject root, Mesh sphere)
+    {
+        root.transform.localScale = Vector3.one;
+        root.GetComponent<MeshFilter>().sharedMesh = sphere;
+        var collider = root.GetComponent<CircleCollider2D>();
+        if (collider != null) collider.radius = RoundBrickDiameter / 2f;
+        var cracks = root.transform.Find("Cracks");
+        if (cracks == null) return;
+        cracks.localPosition = new Vector3(0f, 0f, RoundBrickCrackDepth);
+        cracks.localScale = Vector3.one * (RoundBrickDiameter * RoundBrickCrackFace);
     }
 
     // The outline each block prefab wears, and the whole of what stage 108
@@ -3273,18 +3513,22 @@ public static class ArkanoidSetup
     // actually does, or null once all four agree.
     static string FirstStaleGrainUvSpan()
     {
-        foreach (var (path, uvPerUnit) in BrickGrainUvSpans)
-            if (GrainUvSpanDiffers(path, uvPerUnit)) return path;
+        foreach (var (path, uvPerUnit, normalScale) in BrickGrainUvSpans)
+            if (GrainUvSpanDiffers(path, uvPerUnit, normalScale)) return path;
         return null;
     }
 
-    static bool GrainUvSpanDiffers(string prefabPath, Vector2 uvPerUnit)
+    // Both facts the table carries, checked together, because the stage writes
+    // them together: a guard that watched only the span would answer "current"
+    // to every retune of the relief.
+    static bool GrainUvSpanDiffers(string prefabPath, Vector2 uvPerUnit, float normalScale)
     {
         var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
         var brick = prefab != null ? prefab.GetComponent<Brick>() : null;
         if (brick == null) return false;
-        var authored = new SerializedObject(brick).FindProperty("grainUvPerUnit").vector2Value;
-        return (authored - uvPerUnit).sqrMagnitude > 0.0000001f;
+        var so = new SerializedObject(brick);
+        return (so.FindProperty("grainUvPerUnit").vector2Value - uvPerUnit).sqrMagnitude > 0.0000001f
+            || Mathf.Abs(so.FindProperty("grainNormalScale").floatValue - normalScale) > 0.0005f;
     }
 
     // One material's grain maps of one kind, in its own table's order. Null if
@@ -4299,20 +4543,24 @@ public static class ArkanoidSetup
         Object.DestroyImmediate(go);
     }
 
-    // Round brick: a half-size sphere whose CircleCollider2D matches its
-    // silhouette exactly, so the ball reflects off the circle's radial
-    // normal — glancing hits deflect sideways instead of bouncing flat.
-    static void CreateRoundBrickPrefab(Material material, Sprite[] cracks)
+    // Round brick: a sphere whose CircleCollider2D matches its silhouette
+    // exactly, so the ball reflects off the circle's radial normal — glancing
+    // hits deflect sideways instead of bouncing flat.
+    //
+    // The sphere is this project's own rather than the stock one, for its UVs
+    // and for nothing else (see RoundBrickMeshPath). The geometry is authored
+    // at final size, like the rounded prism's and unlike the two box blocks',
+    // so the transform scale is one and everything measured in it is in world
+    // units.
+    static void CreateRoundBrickPrefab(Material material, Mesh mesh, Sprite[] cracks)
     {
         var go = new GameObject("RoundBrick");
-        go.transform.localScale = Vector3.one * RoundBrickDiameter;
-        go.AddComponent<MeshFilter>().sharedMesh = Resources.GetBuiltinResource<Mesh>("New-Sphere.fbx");
+        go.AddComponent<MeshFilter>().sharedMesh = mesh;
         go.AddComponent<MeshRenderer>().sharedMaterial = material;
-        go.AddComponent<CircleCollider2D>().radius = 0.5f;
+        go.AddComponent<CircleCollider2D>().radius = RoundBrickDiameter / 2f;
         go.AddComponent<Brick>();
-        // 0.7 ~ an inscribed square: keeps the square crack sprite's pixels
-        // over the sphere's circular silhouette instead of floating past it.
-        AddCrackOverlay(go, new Vector3(0f, 0f, -0.52f), Vector3.one * 0.7f, cracks);
+        AddCrackOverlay(go, new Vector3(0f, 0f, RoundBrickCrackDepth),
+            Vector3.one * (RoundBrickDiameter * RoundBrickCrackFace), cracks);
         PrefabUtility.SaveAsPrefabAsset(go, RoundBrickPrefabPath);
         Object.DestroyImmediate(go);
     }
@@ -5626,6 +5874,96 @@ public static class ArkanoidSetup
         mesh.SetUVs(0, uvs);
         mesh.SetTriangles(triangles, 0);
         mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    // A sphere the grain can be read on: ordinary lat/long geometry, with the
+    // *texture* coordinates taken from the vertex's own x and y in world units
+    // rather than from its longitude and latitude.
+    //
+    // That one substitution is the whole of it. A lat/long map wraps the grain
+    // around the ball — converging at the poles, compressing toward the rim,
+    // seamed down the back — so a grain authored for a flat face arrives as
+    // concentric arcs, at a world size that is arithmetically correct and
+    // visually nothing like the slab beside it. Projected, `uv = (x, y)`, the
+    // ball shows the same patch of grain the flat block shows, the same size,
+    // squarely: the projection is the camera's own direction, and this is a
+    // game seen face-on from one side.
+    //
+    // What it costs is at the silhouette, where the surface turns edge-on and a
+    // projected texture must smear along it. Unavoidable rather than chosen —
+    // no map of a plane onto a hemisphere is free — and put where it is least
+    // seen: the rim is a couple of pixels of a block this size, and already the
+    // darkest part of it.
+    //
+    // Normals are lifted toward the camera by RoundBrickNormalLift rather than
+    // left radial, which is what lets the grain be *seen* on a ball at all.
+    // Tangents are set explicitly rather than left to the importer: with UVs
+    // that are a plane's, the tangent frame is world x/y everywhere, which is
+    // the frame the grain's normal map was baked in — derived per vertex it
+    // would collapse exactly where the projection does.
+    // A point's shading normal: its own radial one, leaned toward the camera
+    // and renormalised. At the centre of the ball it is unchanged (it already
+    // faces the camera); at the silhouette it swings from square-on to the
+    // viewer's plane to about 18 degrees off the face, which is what turns the
+    // rim from unlit to merely darker.
+    static Vector3 LiftedNormal(Vector3 unit) =>
+        (unit + RoundBrickNormalLift * Vector3.back).normalized;
+
+    static Mesh BuildPlanarUvSphereMesh(string name, float diameter, int segments, int rings)
+    {
+        float radius = diameter / 2f;
+        var mesh = new Mesh { name = name };
+        var vertices = new List<Vector3>();
+        var normals = new List<Vector3>();
+        var tangents = new List<Vector4>();
+        var uvs = new List<Vector2>();
+        var triangles = new List<int>();
+
+        for (int ring = 0; ring <= rings; ring++)
+        {
+            // Latitude from the -Y pole to the +Y one. The poles are top and
+            // bottom rather than front and back, which matters only for where
+            // the tessellation's own seams fall relative to the camera.
+            float polar = Mathf.PI * ring / rings;
+            float y = Mathf.Cos(polar), ringRadius = Mathf.Sin(polar);
+            for (int segment = 0; segment <= segments; segment++)
+            {
+                float azimuth = 2f * Mathf.PI * segment / segments;
+                var unit = new Vector3(
+                    ringRadius * Mathf.Sin(azimuth), y, ringRadius * Mathf.Cos(azimuth));
+                vertices.Add(unit * radius);
+                normals.Add(LiftedNormal(unit));
+                tangents.Add(new Vector4(1f, 0f, 0f, -1f));
+                uvs.Add(new Vector2(unit.x * radius, unit.y * radius));
+            }
+        }
+
+        int stride = segments + 1;
+        for (int ring = 0; ring < rings; ring++)
+        {
+            for (int segment = 0; segment < segments; segment++)
+            {
+                int a = ring * stride + segment;
+                int b = a + stride;
+                // Wound so the face normal points *out*. The other way round
+                // costs a full rebuild to notice and does not look like a
+                // winding fault when you do: with the front faces culled you
+                // are looking at the inside of the far hemisphere, which came
+                // back as a flat grey disc in Crystal and an almost black ball
+                // in Polymer — both of which read as "the lighting is wrong".
+                // RoundBrickWindingIsInverted is the standing check.
+                triangles.Add(a); triangles.Add(b); triangles.Add(a + 1);
+                triangles.Add(a + 1); triangles.Add(b); triangles.Add(b + 1);
+            }
+        }
+
+        mesh.SetVertices(vertices);
+        mesh.SetNormals(normals);
+        mesh.SetTangents(tangents);
+        mesh.SetUVs(0, uvs);
+        mesh.SetTriangles(triangles, 0);
         mesh.RecalculateBounds();
         return mesh;
     }

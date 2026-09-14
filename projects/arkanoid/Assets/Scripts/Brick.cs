@@ -23,6 +23,21 @@ public class Brick : MonoBehaviour
     // as pebbles on the slab and as stripes on the half-block.
     [SerializeField] Vector2 grainUvPerUnit = Vector2.one;
 
+    // How hard this shape reads its grain's relief, as a multiplier on the
+    // normal map — `_BumpScale`, authored per prefab beside the UV span above
+    // and for a related reason: one authored grain does not arrive equally on
+    // four shapes.
+    //
+    // It is 1 on the three flat-faced blocks, whose faces the key light strikes
+    // square on, and more than that on the round one, which is curved and
+    // therefore lit worse everywhere but its centre. Lifting its normals
+    // (ArkanoidSetup.RoundBrickNormalLift) bought back the light; this buys
+    // back the *relief*, and the two are worth keeping apart — the lift makes
+    // the ball flatter to light, where this only makes its grain deeper, so a
+    // block can be made to show its surface without being made to stop looking
+    // like a ball.
+    [SerializeField] float grainNormalScale = 1f;
+
     // What the damage carver needs to know about this shape's outline, both
     // authored per prefab because neither can be read off a mesh with any
     // confidence. The radius is in world units and is zero for a square block;
@@ -269,6 +284,7 @@ public class Brick : MonoBehaviour
             properties.SetTexture("_BumpMap", look.GrainNormal);
             properties.SetVector("_BumpMap_ST",
                 new Vector4(tiling.x, tiling.y, look.GrainOffset.x, look.GrainOffset.y));
+            properties.SetFloat("_BumpScale", grainNormalScale);
         }
         GetComponent<MeshRenderer>().SetPropertyBlock(properties);
     }
