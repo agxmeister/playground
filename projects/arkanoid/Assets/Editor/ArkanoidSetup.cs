@@ -249,17 +249,15 @@ public static class ArkanoidSetup
     //
     // `NormalScale` rides along because it answers the same question from the
     // other side: the span says how big the grain comes out on this shape, and
-    // this says how hard it reads once it is there. One for every flat-faced
-    // block, whose face the key light strikes square on, and more for the round
-    // one, which is curved and lit worse everywhere but its centre.
+    // this says how hard it reads once it is there.
     static readonly (string Prefab, Vector2 UvPerUnit, float NormalScale)[] BrickGrainUvSpans =
     {
         // The two box blocks wear world-UV meshes of their own rather than the
         // stock cube (stages 96 and 97), so like the rounded prism they measure
         // one UV unit to one world unit on every face.
-        (BrickPrefabPath, Vector2.one, 1f),
-        (HalfBrickPrefabPath, Vector2.one, 1f),
-        (RoundedBrickPrefabPath, Vector2.one, 1f),
+        (BrickPrefabPath, Vector2.one, BlockGrainRelief),
+        (HalfBrickPrefabPath, Vector2.one, BlockGrainRelief),
+        (RoundedBrickPrefabPath, Vector2.one, BlockGrainRelief),
         // And the round one does too, now that its sphere is built here with
         // planar UVs rather than taken from Unity with lat/long ones. What
         // stood here was the stock sphere's pair — 1/(pi*d) across u and
@@ -267,21 +265,28 @@ public static class ArkanoidSetup
         // arithmetically right: the grain came out the same world size on the
         // ball as on a slab, and still arrived as concentric arcs, because a
         // wrapped map is not a projected one.
-        //
-        // Its normal scale is the one number here that is a *taste* rather than
-        // a measurement — `RoundBrickGrainRelief`, set by eye on the bench
-        // against the flat blocks standing beside it.
-        (RoundBrickPrefabPath, Vector2.one, RoundBrickGrainRelief),
+        (RoundBrickPrefabPath, Vector2.one, BlockGrainRelief),
     };
 
-    // How much deeper the round block reads its grain than a flat one. A ball
-    // spends most of its face turned away from the key light, so the same
-    // relief arrives with less light to cast a shadow in; this is the
-    // compensation, and it is deliberately a separate dial from the normal lift
-    // that answers the *brightness* — the lift flattens the ball to light and
-    // this does not, so the surface can be deepened without the shape being
-    // ironed out.
-    const float RoundBrickGrainRelief = 1.6f;
+    // How hard a block reads its grain's relief: a multiplier on the normal
+    // map, and the same one on all four shapes.
+    //
+    // **It was authored per shape before it was authored at all**, and the
+    // history is the argument for the number. It arrived as the round block's
+    // alone — a ball spends most of its face turned away from the key light, so
+    // the same relief reaches it with less light to cast a shadow in, and 1.6
+    // was the compensation, set by eye on the bench against the flat blocks
+    // beside it. Seen at that depth, the flat blocks were the ones that looked
+    // underdrawn, so the number went to all four and the compensation argument
+    // lapsed with it. **The dial stays per prefab even though the four now
+    // agree**, because the reason it might differ has not gone anywhere: a
+    // shape lit worse than a slab wants more relief than a slab, and the day
+    // the ball wants its margin back this is where it goes.
+    //
+    // Deliberately a separate dial from the round block's normal lift, which
+    // answers the *brightness*: the lift flattens the ball to light and this
+    // does not, so a surface can be deepened without a shape being ironed out.
+    const float BlockGrainRelief = 1.6f;
 
     // Which relief a grain is, across all three reference sheets. Polymer's
     // three are the characters that dominate a sheet of moulded plastic: the

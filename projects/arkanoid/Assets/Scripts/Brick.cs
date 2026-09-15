@@ -28,14 +28,18 @@ public class Brick : MonoBehaviour
     // and for a related reason: one authored grain does not arrive equally on
     // four shapes.
     //
-    // It is 1 on the three flat-faced blocks, whose faces the key light strikes
-    // square on, and more than that on the round one, which is curved and
-    // therefore lit worse everywhere but its centre. Lifting its normals
-    // (ArkanoidSetup.RoundBrickNormalLift) bought back the light; this buys
-    // back the *relief*, and the two are worth keeping apart — the lift makes
-    // the ball flatter to light, where this only makes its grain deeper, so a
-    // block can be made to show its surface without being made to stop looking
-    // like a ball.
+    // The same on all four shapes today (ArkanoidSetup.BlockGrainRelief), though
+    // it was the round block's own number first: a ball is lit worse than a
+    // slab everywhere but its centre, so it was given the deeper relief to
+    // compensate — and at that depth the flat blocks were the ones that looked
+    // underdrawn. It stays a per-prefab fact because the reason it might differ
+    // has not gone away.
+    //
+    // Worth keeping apart from the round block's normal lift
+    // (ArkanoidSetup.RoundBrickNormalLift), which bought back the *light*: the
+    // lift makes the ball flatter to light, where this only makes its grain
+    // deeper, so a block can be made to show its surface without being made to
+    // stop looking like a ball.
     [SerializeField] float grainNormalScale = 1f;
 
     // What the damage carver needs to know about this shape's outline, both

@@ -153,6 +153,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Brick
   baseHardness: 1
   grainUvPerUnit: {x: 1, y: 1}
+  grainNormalScale: 1.6
   outlineCornerRadius: 0.04242
   carvesDamage: 1
   crackRenderer: {fileID: 5042663409300813454}
