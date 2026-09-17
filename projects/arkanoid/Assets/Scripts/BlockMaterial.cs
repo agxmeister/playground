@@ -98,6 +98,25 @@ public static class BlockMaterials
     public static bool ComesApart(BlockMaterial material) =>
         material == BlockMaterial.Ceramics || material == BlockMaterial.Crystal;
 
+    // Whether a hit takes its piece *there and then*, or outlines it first and
+    // collects on the way past half health (Brick.ShedsBelowHealth).
+    //
+    // A ceramic does not wait. Chipping is what the substance does — the same
+    // fact `Chips` already names at the scale of a flake of glaze — so a ball
+    // arriving at a fired tile takes a bit of it off, and how big a bit is how
+    // hard it was hit. Nothing is drawn on the face at all on this path: the
+    // hole *is* the damage, and a crack outlining a piece that is already gone
+    // would be the second account of one event that the whole pieces feature
+    // exists to avoid.
+    //
+    // Crystal keeps the crack, and the split is the point rather than an
+    // oversight. A cleaved crystal parting along a plane it shows you first is
+    // a different event from a glaze chipping, and the two materials have
+    // disagreed about how a break *looks* since `EdgeOf` — this is the same
+    // disagreement about when it happens.
+    public static bool ShedsOnEveryHit(BlockMaterial material) =>
+        material == BlockMaterial.Ceramics;
+
     // How a piece's boundary runs, which is the one thing the two materials
     // that come apart disagree about. A fired glaze fails in a *conchoidal*
     // fracture — the shell-shaped, curving break a brittle amorphous solid

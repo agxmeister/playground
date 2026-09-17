@@ -529,10 +529,20 @@ public class Brick : MonoBehaviour
         // can still pay — see GameManager.DebrisPoints for what a catch is
         // worth, and note that the paddle has to leave the ball to collect it.
         // Which half of its life the block is in, which is the whole of the
-        // difference between a crack and a hole (see ShedsBelowHealth).
+        // difference between a crack and a hole (see ShedsBelowHealth) — for a
+        // material that keeps that difference at all. One that sheds on every
+        // hit (BlockMaterials.ShedsOnEveryHit) has no first half: it is always
+        // past the point where pieces come away.
+        bool immediate = BlockMaterials.ShedsOnEveryHit(Material);
         bool sheds = Hardness - damage <= Hardness * ShedsBelowHealth;
 
-        if (at.HasValue)
+        if (at.HasValue && immediate)
+        {
+            // No crack stage at all: the bite is taken now and sized by the
+            // damage (see ShedBite).
+            ShedBite(worldSize, localHit);
+        }
+        else if (at.HasValue)
         {
             int struck = shards.NearestStanding(localHit, shardGone);
             if (struck >= 0 && !sheds)
@@ -618,13 +628,27 @@ public class Brick : MonoBehaviour
         var halfLocal = new Vector2(bodyLocalSize.x * 0.5f, bodyLocalSize.y * 0.5f);
         shards ??= BlockDamage.Shards.Build(
             Mathf.RoundToInt(transform.position.x * 613f + transform.position.y * 271f),
-            halfLocal, Mathf.Clamp(Hardness, 3, 8), BlockMaterials.EdgeOf(Material));
+            halfLocal, PieceCount, BlockMaterials.EdgeOf(Material));
         shardGone ??= new bool[shards.Sites.Length];
         shardLoose ??= new bool[shards.Sites.Length];
 
         if (damagedMesh == null) RebuildBody();
         return true;
     }
+
+    // How many pieces this block is divided into. Two rules, because the two
+    // ways a block can break want different things from the partition.
+    //
+    // A block that *cracks first* wants about one piece per hit it can take —
+    // it sheds one at a time, so the count is a count of events. A block that
+    // sheds on every hit wants **resolution instead**: the bite is a share of
+    // the block sized by the damage (see ShedBite), and a share can only be
+    // read as finely as the pieces allow. At three, a ceramic slab's every hit
+    // was either a third of it or two thirds, which is not "bigger damage,
+    // bigger piece" so much as a coin toss between two sizes.
+    int PieceCount => BlockMaterials.ShedsOnEveryHit(Material)
+        ? Mathf.Clamp(Hardness * 3, 6, 12)
+        : Mathf.Clamp(Hardness, 3, 8);
 
     void RebuildBody()
     {
@@ -689,11 +713,66 @@ public class Brick : MonoBehaviour
     // Debris to fall. Nothing about the block moves — the piece is a separate
     // object from the moment it comes away, which is what lets it turn and fall
     // while the wall it left stays exactly where it was.
-    void Shed(int piece, Vector3 worldSize, Vector2 from, Paddle catcher)
+    // One hit's worth of the block, taken there and then: the cells nearest
+    // where the ball landed, as many of them as the damage was worth, thrown as
+    // a single chunk.
+    //
+    // **How many is read off the block's health rather than off the hit**, and
+    // that is what keeps the two from drifting. The share of the block that is
+    // gone is made to match the share of its life that is spent — a block at
+    // two thirds health is a block with a third of it missing — so rounding
+    // cannot accumulate, and a hit that lands when the block is already more
+    // worn than its damage says takes correspondingly less. What the hit itself
+    // decides is *where*, and the floor of one cell is what makes the rule the
+    // player was promised true without exception: every hit takes something.
+    void ShedBite(Vector3 worldSize, Vector2 localHit)
+    {
+        if (shards == null || shardGone == null) return;
+
+        int standing = 0;
+        for (int i = 0; i < shardGone.Length; i++) if (!shardGone[i]) standing++;
+        if (standing <= 0) return;
+
+        int wanted = Mathf.RoundToInt(shards.Sites.Length * (damage / Mathf.Max(Hardness, 1)));
+        int take = wanted - (shards.Sites.Length - standing);
+
+        // At least one, so every hit takes something — but never the last one
+        // standing, because a block whose health has not run out has to still
+        // be there. Without that ceiling a slow ball emptied a ceramic in three
+        // hits of the five it can take, and what was left was an invisible
+        // block with a full-rectangle collider: the ball went on bouncing off
+        // nothing. The floor and the ceiling disagree only in that corner, and
+        // the ceiling wins it — the promise the player can actually check is
+        // that the wall is still in front of them.
+        take = Mathf.Clamp(take, 1, Mathf.Max(standing - 1, 0));
+        if (take <= 0) return;
+
+        var taken = new List<int>(take);
+
+        for (int i = 0; i < take; i++)
+        {
+            // Nearest *standing*, re-asked after each one is marked gone, so
+            // the cells come off as a cluster round the impact rather than as
+            // the same cell answered over and over.
+            int next = shards.NearestStanding(localHit, shardGone);
+            if (next < 0) break;
+            shardGone[next] = true;
+            taken.Add(next);
+        }
+        if (taken.Count == 0) return;
+
+        Shed(taken, worldSize, localHit,
+            GameManager.Instance != null ? GameManager.Instance.Catcher : null);
+    }
+
+    void Shed(int piece, Vector3 worldSize, Vector2 from, Paddle catcher) =>
+        Shed(new[] { piece }, worldSize, from, catcher);
+
+    void Shed(IReadOnlyList<int> pieces, Vector3 worldSize, Vector2 from, Paddle catcher)
     {
         var mesh = BlockDamage.BuildPiece(
             bodyLocalSize, worldSize, bites, outlineCornerRadius,
-            shards, piece, out var centre);
+            shards, pieces, out var centre);
         if (mesh == null) return;
         if (mesh.vertexCount == 0)
         {

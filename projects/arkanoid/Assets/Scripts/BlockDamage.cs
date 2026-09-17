@@ -257,7 +257,7 @@ public static class BlockDamage
     public static Mesh BuildBlock(
         Vector3 localSize, Vector3 worldSize,
         IReadOnlyList<Bite> bites, float cornerRadius, Shards shards, bool[] gone) =>
-        Build(localSize, worldSize, bites, cornerRadius, shards, gone, -1, out _);
+        Build(localSize, worldSize, bites, cornerRadius, shards, gone, null, out _);
 
     // One piece, on its own, as it comes away: the same cells the block has
     // just stopped drawing, built as a mesh of their own and recentred on the
@@ -270,7 +270,24 @@ public static class BlockDamage
         Vector3 localSize, Vector3 worldSize,
         IReadOnlyList<Bite> bites, float cornerRadius, Shards shards, int piece,
         out Vector3 centre) =>
-        Build(localSize, worldSize, bites, cornerRadius, shards, null, piece, out centre);
+        Build(localSize, worldSize, bites, cornerRadius, shards, null, new[] { piece }, out centre);
+
+    // Several cells as **one** piece, which is what a hit takes out of a
+    // material that sheds on every hit: the bite is sized by the damage, so a
+    // harder hit hands over more cells and the chunk that falls is bigger (see
+    // Brick.Carve). One mesh and one falling object rather than a handful, so
+    // what leaves the block reads as a part of it rather than as a spray.
+    //
+    // Each cell is still drawn as its own closed solid, exactly as the block
+    // draws them, so the walls between the cells of one chunk are there. They
+    // are inside an opaque chunk and cost nothing to look at — and paying that
+    // rather than special-casing the seams keeps this the same construction the
+    // block itself uses, which is the invariant the whole mesh rests on.
+    public static Mesh BuildPiece(
+        Vector3 localSize, Vector3 worldSize,
+        IReadOnlyList<Bite> bites, float cornerRadius, Shards shards,
+        IReadOnlyList<int> pieces, out Vector3 centre) =>
+        Build(localSize, worldSize, bites, cornerRadius, shards, null, pieces, out centre);
 
     // The crack, as a ribbon of its own laid just in front of the face: one
     // cell wide, running along the border of every piece that has come loose
@@ -395,8 +412,13 @@ public static class BlockDamage
     static Mesh Build(
         Vector3 localSize, Vector3 worldSize,
         IReadOnlyList<Bite> bites, float cornerRadius, Shards shards, bool[] gone,
-        int piece, out Vector3 centre)
+        IReadOnlyList<int> pieces, out Vector3 centre)
     {
+        // `pieces` names what is being built: null is the block — everything
+        // still standing — and anything else is a chunk coming away, of one
+        // cell or of several.
+        bool falling = pieces != null && pieces.Count > 0;
+
         var halfLocal = localSize * 0.5f;
         // Local units per world unit, per axis: everything measured in world
         // units below is cut in local space through this.
@@ -634,7 +656,7 @@ public static class BlockDamage
         // between pieces are visible from the first frame — a block visibly
         // *is* made of pieces — which is the look this trades for.
         var draw = new List<int>();
-        if (piece >= 0) draw.Add(piece);
+        if (falling) draw.AddRange(pieces);
         else if (shards == null) draw.Add(-1);
         else
             for (int k = 0; k < shards.Sites.Length; k++)
@@ -751,7 +773,7 @@ public static class BlockDamage
         // and reads as the chunk of a solid it is (see BuildPiece).
         void Side(int i, int j, int di, int dj, int from, int to)
         {
-            if (piece >= 0 ? Beside(i + di, j + dj) : Within(i + di, j + dj)) return;
+            if (falling ? Beside(i + di, j + dj) : Within(i + di, j + dj)) return;
             // The rim is the block's own outline and nothing else. A bite has
             // eaten into the frame rather than ended it, so the edge it leaves
             // is a break and takes the hard wall even where both its nodes
@@ -785,7 +807,7 @@ public static class BlockDamage
             // of the block — showing through the glass as a second line. A
             // falling piece is the one thing here that turns over, so it is the
             // one thing that needs a back.
-            if (piece >= 0)
+            if (falling)
                 for (int j = 0; j < rows; j++)
                     for (int i = 0; i < columns; i++)
                     {
@@ -897,7 +919,7 @@ public static class BlockDamage
         // so the object that carries it can be put at that point in the world
         // and turned about itself. The block keeps the origin it always had.
         centre = Vector3.zero;
-        if (piece >= 0 && vertices.Count > 0)
+        if (falling && vertices.Count > 0)
         {
             var sum = Vector3.zero;
             for (int i = 0; i < vertices.Count; i++) sum += vertices[i];
@@ -905,7 +927,7 @@ public static class BlockDamage
             for (int i = 0; i < vertices.Count; i++) vertices[i] -= centre;
         }
 
-        var mesh = new Mesh { name = piece >= 0 ? "BlockPiece" : "BlockDamaged" };
+        var mesh = new Mesh { name = falling ? "BlockPiece" : "BlockDamaged" };
         // A damaged slab runs to a few thousand vertices, which is still well
         // inside a 16-bit index buffer; saying so keeps it there rather than
         // letting Unity widen it.
